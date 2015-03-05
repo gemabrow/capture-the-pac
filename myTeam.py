@@ -55,19 +55,63 @@ class BaseAgent(CaptureAgent):
 
     IMPORTANT: This method may run for at most 15 seconds.
     """
-
-    ''' 
-    Make sure you do not delete the following line. If you would like to
-    use Manhattan distances instead of maze distances in order to save
-    on initialization time, please take a look at
-    CaptureAgent.registerInitialState in captureAgents.py. 
-    '''
     CaptureAgent.registerInitialState(self, gameState)
 
     ''' 
-    Your initialization code goes here, if you need any.
+    VARIABLES (from CaptureAgent):
+    self.index = index for this agent
+    self.red = true if you're on the red team, false otherwise
+    self.agentsOnTeam = a list of agent objects that make up your team
+    self.distancer = distance calculator (contest code provides this)
+    self.observationHistory = list of GameState objects that correspond
+        to the sequential order of states that have occurred so far this game
+    self.timeForComputing = an amount of time to give each turn for computing maze distances
+        (part of the provided distance calculator)
     '''
-
+    
+  '''
+  FUNCTIONS (from CaptureAgent):
+  self.final(gameState): 
+    resets observationHistory
+  self.registerTeam(agentsOnTeam): 
+    fills CaptureAgent.agentsOnTeam with indices of agents on team
+  self.observationFunction(gameState):
+    return gameState.makeObservation(CaptureAgent.index)
+  self.getAction(gameState):
+    appends current gameState on to our observation history
+    and calls our choose action method
+  self.getFood(gameState):
+    returns a matrix with the food we're meant to eat
+    in the form m[x][y]==true if there is food for us
+    in that square (based on our team color).
+   self.getFoodYouAreDefending(gameState):
+     returns the food we should protect in the form
+     of a matrix m[x][y]==true if there is food our
+     opponent can eat at those coordinates.
+   self.getCapsules(gameState):
+   self.getCapsulesYouAreDefending(gameState):
+   self.getOpponents(gameState):
+     returns agent indices of our opponents in list form.
+   self.getTeam(gameState:
+     returns a list of indices of the agents on our team.
+   self.getScore(gameState):
+     returns a number that is the difference in teams' scores.
+     will be negative if we're a bunch of sissy la-la losers.
+   self.getMazeDistance(pos1, pos2):
+     returns the maze distance from pos1 to pos2.
+   self.getPreviousObservation():
+     returns the last GameState object this agent saw
+     (may not include the exact locations of our opponent's agents)
+   self.getCurrentObservation():
+     like before, but now
+   self.displayDistributionsOverPositions(distributions):
+     arg distributions is a tuple or list of util.Counter objects,
+     where the i'th Counter has keys that are board positions (x,y)
+     and values that encode the probability that agent i is at (x,y).
+     returns an overlay of a distribution over positions on the pacman
+     board representing an agent's beliefs about the positions of each
+     agent.
+   '''
 
   def chooseAction(self, gameState):
     """
