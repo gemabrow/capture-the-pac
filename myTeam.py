@@ -42,7 +42,7 @@ class BaseAgent(CaptureAgent):
   """
   A base agent to serve as a foundation for the varying agent structure.
   """
-
+  
   def registerInitialState(self, gameState):
     """
     This method handles the initial setup of the
@@ -111,8 +111,173 @@ class BaseAgent(CaptureAgent):
      returns an overlay of a distribution over positions on the pacman
      board representing an agent's beliefs about the positions of each
      agent.
-   '''
+  
+  NOTE: Since the opposing agents' positions are not given (i.e. not
+  directly observable), a joint particle abstraction should be used.
+  *********************** Joint Particle Junk ***********************************************************
+  def initialize(self, gameState, legalPositions, numParticles = 600):
+    "Stores information about the game, then initializes particles."
+    self.numGhosts = gameState.getNumAgents() - 1
+    self.numParticles = numParticles
+    self.ghostAgents = []
+    self.legalPositions = legalPositions
+    self.initializeParticles()
+    
+  def initializeParticles(self):
+    "Initializes particles randomly.  Each particle is a tuple of ghost positions."
+    self.particles = []
+    for i in range(self.numParticles):
+      self.particles.append(tuple([random.choice(self.legalPositions) for j in range(self.numGhosts)]))
 
+  def addGhostAgent(self, agent):
+    "Each ghost agent is registered separately and stored (in case they are different)."
+    self.ghostAgents.append(agent)
+    
+  def elapseTime(self, gameState):
+    """
+    Samples each particle's next state based on its current state and the gameState.
+
+    To loop over the ghosts, use:
+
+      for i in range(self.numGhosts):
+        ...
+
+    Then, assuming that "i" refers to the (0-based) index of the
+    ghost, to obtain the distributions over new positions for that
+    single ghost, given the list (prevGhostPositions) of previous
+    positions of ALL of the ghosts, use this line of code:
+
+      newPosDist = getPositionDistributionForGhost(setGhostPositions(gameState, prevGhostPositions),
+                                                  i + 1, self.ghostAgents[i])
+
+    Note that you may need to replace "prevGhostPositions" with the
+    correct name of the variable that you have used to refer to the
+    list of the previous positions of all of the ghosts, and you may
+    need to replace "i" with the variable you have used to refer to
+    the index of the ghost for which you are computing the new
+    position distribution.
+
+    As an implementation detail (with which you need not concern
+    yourself), the line of code above for obtaining newPosDist makes
+    use of two helper functions defined below in this file:
+
+      1) setGhostPositions(gameState, ghostPositions)
+          This method alters the gameState by placing the ghosts in the supplied positions.
+      
+      2) getPositionDistributionForGhost(gameState, ghostIndex, agent)
+          This method uses the supplied ghost agent to determine what positions 
+          a ghost (ghostIndex) controlled by a particular agent (ghostAgent) 
+          will move to in the supplied gameState.  All ghosts
+          must first be placed in the gameState using setGhostPositions above.
+          Remember: ghosts start at index 1 (Pacman is agent 0).  
+          
+          The ghost agent you are meant to supply is self.ghostAgents[ghostIndex-1],
+          but in this project all ghost agents are always the same.
+    """
+    newParticles = []
+    for oldParticle in self.particles:
+      newParticle = list(oldParticle) # A list of ghost positions
+      "*** YOUR CODE HERE ***"
+      # note that the length of list newParticle is
+      # equal to the number of ghosts agents
+      for i, pos in enumerate(newParticle):
+        updatedState = setGhostPositions(gameState, newParticle)
+        newPosDist = getPositionDistributionForGhost(gameState, i+1, self.ghostAgents[i])
+        newParticle[i] = util.sample(newPosDist)
+      newParticles.append(tuple(newParticle))
+    self.particles = newParticles
+  
+  def observeState(self, gameState):
+    """
+    Resamples the set of particles using the likelihood of the noisy observations.
+
+    As in elapseTime, to loop over the ghosts, use:
+
+      for i in range(self.numGhosts):
+        ...
+
+    A correct implementation will handle two special cases:
+      1) When a ghost is captured by Pacman, all particles should be updated so
+        that the ghost appears in its prison cell, position (2 * i + 1, 1),
+        where "i" is the 0-based index of the ghost.
+
+        You can check if a ghost has been captured by Pacman by
+        checking if it has a noisyDistance of 999 (a noisy distance
+        of 999 will be returned if, and only if, the ghost is
+        captured).
+        
+      2) When all particles receive 0 weight, they should be recreated from the
+          prior distribution by calling initializeParticles.
+    """ 
+    pacmanPosition = gameState.getPacmanPosition()
+    noisyDistances = gameState.getNoisyGhostDistances()
+    
+    if len(noisyDistances) < self.numGhosts: return
+    emissionModels = [busters.getObservationDistribution(dist) for dist in noisyDistances]
+
+    "*** YOUR CODE HERE ***"
+    import logging
+    newBeliefs = util.Counter()
+    for particle in self.particles:
+      w = 1.0 # initial weight
+      for j in range(self.numGhosts):
+        if noisyDistances[j] == 999:
+          # update particles to prison cell
+          particle = self.getPrisonParticles(particle, j)
+          # logging.warning('self.particles does not reflect captured ghosts')
+        else:
+          trueDistance = util.manhattanDistance(particle[j], pacmanPosition)
+          w *= emissionModels[j][trueDistance]
+      newBeliefs[particle] += w
+    
+    newBeliefs.normalize()
+    if newBeliefs.totalCount() == 0:
+      self.initializeParticles()
+    else:
+      updatedSamples = []
+      for i in range(self.numParticles):
+          updatedSamples.append(util.sample(newBeliefs))
+      self.particles = updatedSamples
+      
+  def getPrisonParticles(self, particles, ghostIndex):
+    """
+    Updates all associated particles with the ith ghost to
+    its respective prison cell given position (2 * i + 1, 1)
+    """
+    p = list(particles)
+    p[ghostIndex] = ( 2 * ghostIndex + 1, 1)
+    return tuple(p)
+    
+  def getBeliefDistribution(self):
+    dist = util.Counter()
+    for part in self.particles: dist[part] += 1
+    dist.normalize()
+    return dist
+
+  # One JointInference module is shared globally across instances of MarginalInference 
+  jointInference = JointParticleFilter()
+
+  def getPositionDistributionForGhost(gameState, ghostIndex, agent):
+    """
+    Returns the distribution over positions for a ghost, using the supplied gameState.
+    """
+    ghostPosition = gameState.getGhostPosition(ghostIndex) 
+    actionDist = agent.getDistribution(gameState)
+    dist = util.Counter()
+    for action, prob in actionDist.items():
+      successorPosition = game.Actions.getSuccessor(ghostPosition, action)
+      dist[successorPosition] = prob
+    return dist
+    
+  def setGhostPositions(gameState, ghostPositions):
+    "Sets the position of all ghosts to the values in ghostPositionTuple."
+    for index, pos in enumerate(ghostPositions):
+      conf = game.Configuration(pos, game.Directions.STOP)
+      gameState.data.agentStates[index + 1] = game.AgentState(conf, False)
+    return gameState  
+
+  ****************************** END OF JOINT PARTICLE JUNK *********************************************
+  '''
   def chooseAction(self, gameState):
     """
     Picks among the actions with the highest Q(s,a).
@@ -167,9 +332,7 @@ class BaseAgent(CaptureAgent):
   
 class PrimaryAgent(BaseAgent):
   """
-  A reflex agent that seeks food. This is an agent
-  we give you to get an idea of what an offensive agent might look like,
-  but it is by no means the best or only way to build an offensive agent.
+  A qlearning agent that seeks food.
   
   *** IDEA: use combination of P3 - Question 9 and imported/exported JSON data
   ***       - for training phase, utilize greedy agent from P4
@@ -201,6 +364,11 @@ class SecondaryAgent(BaseAgent):
   could be like.  It is not the best or only way to make
   such an agent.
   """
+  
+  ''' Assuming that a joint particle approach is the best for a defensive agent,
+      the following is the basis for that (taken directly from p4):
+      
+
 
   def getFeatures(self, gameState, action):
     features = util.Counter()
