@@ -359,16 +359,9 @@ class PrimaryAgent(BaseAgent):
 
 class SecondaryAgent(BaseAgent):
   """
-  A reflex agent that keeps its side Pacman-free. Again,
-  this is to give you an idea of what a defensive agent
-  could be like.  It is not the best or only way to make
-  such an agent.
+  A secondary agent, playing and reacting to PrimaryAgent's
+  most recent action taken to achieve the best cooperative outcome
   """
-  
-  ''' Assuming that a joint particle approach is the best for a defensive agent,
-      the following is the basis for that (taken directly from p4):
-      
-
 
   def getFeatures(self, gameState, action):
     features = util.Counter()
