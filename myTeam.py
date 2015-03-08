@@ -404,7 +404,7 @@ class PrimaryAgent(BaseAgent):
     self.discount = float(gamma)
     self.numTraining = int(numTraining)
     self.index  # This is always the primary agent
-    self.featExtractor = 
+    self.featExtractor = MasterExtractor()
     # initialize the weights to be assigned to varying features
     self.weights = util.Counter()
   ####################################
@@ -412,31 +412,79 @@ class PrimaryAgent(BaseAgent):
   ####################################
   def getQValue(self, state, action):
     """
-    Should return Q(state,action)
+      Should return Q(state,action) = w * featureVector
+      where * is the dotProduct operator
     """
-    util.raiseNotDefined()
+    "*** YOUR CODE HERE ***"
+    QValue = 0.0
+    # extract feature vectors
+    featureVectors = self.featExtractor.getFeatures(state, action)
+    # perform dotProduct multiplication
+    for fV in featureVectors:
+      QValue += featureVectors[fV] * self.weights[fV]
+    return QValue
 
+  def update(self, state, action, nextState, reward):
+    """
+       Should update your weights based on transition
+    """
+    "*** YOUR CODE HERE ***"
+    # correction = ( R(s,a) + gamma * V(s') ) - Q(s,a)
+    correction = reward + self.discount * self.getValue(nextState) - self.getQValue(state, action)
+    
+    featureVectors = self.featExtractor.getFeatures(state, action)
+    for fV in featureVectors:
+      # w_i <- w_i + alpha * [correction] * f_i(s,a)
+      self.weights[fV] += self.alpha * correction * featureVectors[fV]
+      
   def getValue(self, state):
     """
-    What is the value of this state under the best action?
-    Concretely, this is given by
-
-    V(s) = max_{a in actions} Q(s,a)
+      Returns max_action Q(state,action)
+      where the max is over legal actions.  Note that if
+      there are no legal actions, which is the case at the
+      terminal state, you should return a value of 0.0.
     """
-    util.raiseNotDefined()
+    "*** YOUR CODE HERE ***"
+    legalActions = self.getLegalActions(state)
+    if len(legalActions) == 0:
+      return 0.0
+
+    # creates a list of all Q Values for legal actions from current state
+    qValues = [self.getQValue(state, action) for action in legalActions]
+    # returns the max from aforementioned list
+    return max(qValues)
 
   def getPolicy(self, state):
     """
-    What is the best action to take in the state. Note that because
-    we might want to explore, this might not coincide with getAction
-    Concretely, this is given by
-
-    policy(s) = arg_max_{a in actions} Q(s,a)
-
-    If many actions achieve the maximal Q-value,
-    it doesn't matter which is selected.
+      Compute the best action to take in a state.  Note that if there
+      are no legal actions, which is the case at the terminal state,
+      you should return None.
     """
-    util.raiseNotDefined()
+    "*** YOUR CODE HERE ***"
+    # intialize policy to None
+    policy = None
+    legalActions = self.getLegalActions(state)
+    # if there are no legal actions, return policy (s.t. policy = None)
+    if len(legalActions) == 0:
+      return policy
+    
+    # find the value of the best action
+    bestValue = self.getValue(state)
+    bestActions = []
+    for action in legalActions:
+      # access QValue in this way due to "Important" note in getQValue
+      thisValue = self.getQValue(state, action)
+      # if the value matches that of the best action, append
+      # NOTE: since there may be multiple actions that have
+      # the "best value" to them, we append all actions
+      # that share this attribute
+      if thisValue == bestValue:
+        bestActions.append(action)
+    
+    # choose a random action from the list of actions
+    # associated with the best value
+    policy = random.choice(bestActions)
+    return policy
 
   def getAction(self, state):
     """
@@ -447,19 +495,19 @@ class PrimaryAgent(BaseAgent):
     action = QLearningAgent.getAction(self,state)
     self.doAction(state,action)
     return action
-#******************************************************FEATURE EXTRACTOR BUSINESS********************************************************************************
-  def getFeatures(self, gameState, action):
-    features = util.Counter()
-    successor = self.getSuccessor(gameState, action)
-    features['successorScore'] = self.getScore(successor)
 
-    # Compute distance to the nearest food
-    foodList = self.getFood(successor).asList()
-    if len(foodList) > 0: # This should always be True,  but better safe than sorry
-      myPos = successor.getAgentState(self.index).getPosition()
-      minDistance = min([self.getMazeDistance(myPos, food) for food in foodList])
-      features['distanceToFood'] = minDistance
-    return features
+  def final(self, state):
+    "Called at the end of each game."
+    # call the super-class final method
+    PacmanQAgent.final(self, state)
+
+    # did we finish training?
+    if self.episodesSoFar == self.numTraining:
+      # you might want to print your weights here for debugging
+      "*** YOUR CODE HERE ***"
+      pass
+
+#******************************************************FEATURE EXTRACTOR BUSINESS********************************************************************************
 
   def getWeights(self, gameState, action):
     return {'successorScore': 100, 'distanceToFood': -1}
@@ -497,7 +545,7 @@ class SecondaryAgent(BaseAgent):
 
   def getWeights(self, gameState, action):
     return {'numInvaders': -1000, 'onDefense': 100, 'invaderDistance': -10, 'stop': -100, 'reverse': -2}
- 
+#*************************************END OF SECONDARY AGENT***********************************************************************************************
 # One JointInference module is shared globally across instances of MarginalInference 
 jointInference = JointParticleFilter()
 
@@ -519,21 +567,6 @@ def setEnemyPositions(gameState, enemyPositions, enemyIndices):
     conf = game.Configuration(pos, game.Directions.STOP)
     gameState.data.agentStates[enemyIndices[index + 1]] = game.AgentState(conf, False)
   return gameState  
-
-class FeatureExtractor:  
-  def getFeatures(self, state, action):    
-    """
-      Returns a dict from features to counts
-      Usually, the count will just be 1.0 for
-      indicator functions.  
-    """
-    util.raiseNotDefined()
-
-class IdentityExtractor(FeatureExtractor):
-  def getFeatures(self, state, action):
-    feats = util.Counter()
-    feats[(state,action)] = 1.0
-    return feats
 
 def closestFood(pos, food, walls):
   """
@@ -558,6 +591,7 @@ def closestFood(pos, food, walls):
   return None
 
 class MasterExtractor:
+  #EDIT FUNCTIONS TO PASS IN AN AGENT TO RETRIEVE INFORMATION ABOUT THE AGENT
   """
   Returns simple features for a basic reflex Pacman:
   - whether food will be eaten
@@ -565,14 +599,27 @@ class MasterExtractor:
   - whether a ghost collision is imminent
   - whether a ghost is one step away
   """
+  def getFeatures(self, gameState, action):
+    features = util.Counter()
+    successor = self.getSuccessor(gameState, action)
+    features['successorScore'] = self.getScore(successor)
+
+    # Compute distance to the nearest food
+    foodList = self.getFood(successor).asList()
+    if len(foodList) > 0: # This should always be True,  but better safe than sorry
+      myPos = successor.getAgentState(self.index).getPosition()
+      minDistance = min([self.getMazeDistance(myPos, food) for food in foodList])
+      features['distanceToFood'] = minDistance
+    return features
   
-  def getFeatures(self, state, action):
+  def getFeatures(self, gameState, action):
+    features = util.Counter()
     # extract the grid of food and wall locations and get the ghost locations
     food = state.getFood()
     walls = state.getWalls()
     ghosts = state.getGhostPositions()
 
-    features = util.Counter()
+
     
     features["bias"] = 1.0
     
