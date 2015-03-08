@@ -55,8 +55,18 @@ class BaseAgent(CaptureAgent):
 
     IMPORTANT: This method may run for at most 15 seconds.
     """
-    CaptureAgent.registerInitialState(self, gameState)
 
+    CaptureAgent.registerInitialState(self, gameState)
+    
+    "Stores information about the game, then initializes particles."
+    self.friendIndex = self.index + 2
+    if self.friendIndex > 3:
+      self.friendIndex = self.friendIndex % 2
+    self.enemyAgents = sorted(self.getOpponents(gameState))
+    self.numEnemies = len(self.enemyAgents)
+    self.numParticles = 600
+    self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]   
+    self.initializeParticles(gameState)
     ''' 
     VARIABLES (from CaptureAgent):
     self.index = index for this agent
@@ -92,7 +102,7 @@ class BaseAgent(CaptureAgent):
    self.getCapsulesYouAreDefending(gameState):
    self.getOpponents(gameState):
      returns agent indices of our opponents in list form.
-   self.getTeam(gameState:
+   self.getTeam(gameState):
      returns a list of indices of the agents on our team.
    self.getScore(gameState):
      returns a number that is the difference in teams' scores.
@@ -221,11 +231,6 @@ class BaseAgent(CaptureAgent):
     for particle in self.particles:
       w = 1.0 # initial weight
       for j in range(self.numGhosts):
-        if noisyDistances[j] == 999:
-          # update particles to prison cell
-          particle = self.getPrisonParticles(particle, j)
-          # logging.warning('self.particles does not reflect captured ghosts')
-        else:
           trueDistance = util.manhattanDistance(particle[j], pacmanPosition)
           w *= emissionModels[j][trueDistance]
       newBeliefs[particle] += w
@@ -239,14 +244,6 @@ class BaseAgent(CaptureAgent):
           updatedSamples.append(util.sample(newBeliefs))
       self.particles = updatedSamples
       
-  def getPrisonParticles(self, particles, ghostIndex):
-    """
-    Updates all associated particles with the ith ghost to
-    its respective prison cell given position (2 * i + 1, 1)
-    """
-    p = list(particles)
-    p[ghostIndex] = ( 2 * ghostIndex + 1, 1)
-    return tuple(p)
     
   def getBeliefDistribution(self):
     dist = util.Counter()
@@ -278,6 +275,59 @@ class BaseAgent(CaptureAgent):
 
   ****************************** END OF JOINT PARTICLE JUNK *********************************************
   '''
+  def initializeParticles(self, gameState):
+    "Initializes particles by initial agent position.  Each particle is a tuple of enemy positions."
+    self.particles = []
+    for i in range(self.numParticles):
+      self.particles.append(tuple([gameState.getInitialAgentPosition(self.enemyAgents[j]) for j in self.enemyAgents)]))
+  
+  def elapseTime(self, gameState):
+    """
+    Samples each particle's next state based on its current state and the gameState.
+    
+    Assuming that "i" refers to the index of the
+    enemy, to obtain the distributions over new positions for that
+    single enemy, given the list (prevEnemyPositions) of previous
+    positions of ALL of the enemies, use this line of code:
+    ************ double check logic regarding enemy indices *********************** [-] checked
+    newPosDist = getPositionDistributionForEnemies(setEnemyPositions(gameState, prevEnemyPositions),
+                                                  i + 2, self.enemyAgents[i])
+
+    Note that you may need to replace "prevEnemyPositions" with the
+    correct name of the variable that you have used to refer to the
+    list of the previous positions of all of the enemies, and you may
+    need to replace "i" with the variable you have used to refer to
+    the index of the enemy for which you are computing the new
+    position distribution.
+
+    As an implementation detail (with which you need not concern
+    yourself), the line of code above for obtaining newPosDist makes
+    use of two helper functions defined below in this file:
+
+      1) setEnemyPositions(gameState, enemyPositions)
+          This method alters the gameState by placing the enemies in the supplied positions.
+      
+      2) getPositionDistributionForEnemy(gameState, enemyIndex, enemyAgent)
+          This method uses the supplied enemy agent to determine what positions 
+          an enemy (enemyIndex) controlled by a particular agent (enemyAgent) 
+          will move to in the supplied gameState.  All enemies
+          must first be placed in the gameState using setEnemyPositions above.
+          Remember: enemies start at index 0 or 1 and increase in multiples of 2.  
+          
+          The enemy agent you are meant to supply is self.enemyAgents[enemyIndex-1].
+    """
+    newParticles = []
+    for oldParticle in self.particles:
+      newParticle = list(oldParticle) # A list of enemy positions
+      # note that the length of list newParticle is
+      # equal to the number of enemy agents
+      for i, pos in enumerate(newParticle):
+        updatedState = setEnemyPositions(gameState, newParticle, self.enemyAgents)
+        newPosDist = getPositionDistributionForEnemy(gameState, self.enemyAgents[i+1], self.enemyAgents[i])
+        newParticle[i] = util.sample(newPosDist)
+      newParticles.append(tuple(newParticle))
+    self.particles = newParticles
+      
   def chooseAction(self, gameState):
     """
     Picks among the actions with the highest Q(s,a).
@@ -390,4 +440,26 @@ class SecondaryAgent(BaseAgent):
 
   def getWeights(self, gameState, action):
     return {'numInvaders': -1000, 'onDefense': 100, 'invaderDistance': -10, 'stop': -100, 'reverse': -2}
+ 
+# One JointInference module is shared globally across instances of MarginalInference 
+jointInference = JointParticleFilter()
+
+def getPositionDistributionForEnemy(gameState, enemyIndex, agent):
+  """
+  Returns the distribution over positions for an enemy, using the supplied gameState.
+  """
+  enemyPositions = gameState.getAgentPosition(enemyIndex) 
+  actionDist = agent.getDistribution(gameState)
+  dist = util.Counter()
+  for action, prob in actionDist.items():
+    successorPosition = game.Actions.getSuccessor(ghostPosition, action)
+    dist[successorPosition] = prob
+  return dist
+  
+def setEnemyPositions(gameState, enemyPositions, enemyIndices):
+  "Sets the position of all enemies to the values in enemyPositionTuple."
+  for index, pos in enumerate(enemyPositions):
+    conf = game.Configuration(pos, game.Directions.STOP)
+    gameState.data.agentStates[enemyIndices[index + 1]] = game.AgentState(conf, False)
+  return gameState  
 
