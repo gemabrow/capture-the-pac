@@ -147,7 +147,7 @@ class BaseAgent(CaptureAgent):
     # legalPositions may be unnecessary here --> qLearningAgent instead
     self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]   
     ########################### inference initialization #############################################
-    self.inferenceModules = [ self.inferenceType( enemy, self.index ) 
+    self.inferenceModules = [ self.inferenceType( enemy, self ) 
                              for enemy in self.enemyAgents ]
     for inference in self.inferenceModules: inference.initialize(gameState)
     self.enemyBeliefs = [inf.getBeliefDistribution() for inf in self.inferenceModules]
