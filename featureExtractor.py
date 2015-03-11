@@ -8,7 +8,7 @@
 # For more info, see http://inst.eecs.berkeley.edu/~cs188/sp09/pacman.html
 
 from game import Directions, Actions
-import util, capture
+import util
 
 def closestFood(pos, food, walls):
   """
@@ -54,24 +54,47 @@ class MasterExtractor:
   - whether an enemy collision is imminent
   - whether an enemy is one step away
   """
+  def __init__(self, myAgent):
+    # passing in agent should give us access to beliefs
+    self.agent = myAgent
     
   def getFeatures(self, gameState, action):
-    features = util.Counter()
-    successor = gameState.generateSuccessor(self.index, action)
+    features = util.Counter()    
+    features['bias'] = 1.0
     
+    # ***************** agent features ***********************
     # Computes whether we're on the red or blue team
-    features['red'] = 1 if agent.red else 0
+    features['red'] = 1 if self.agent.red else 0
     # Computes whether we're on defense (1) or offense (0)
-    features['onDefense'] = 1 if agent.isPacman else 0
+    features['onDefense'] = 1 if self.agent.isPacman else 0
+    # Computes whether our teammate is on defense (1) or offense (0)
+    features['friendOnD'] = 1 if self.agent.friendIndex
 
-    myPos = successor.getAgentState(agent.index).getPosition()
+    # instead of generating successor, find next position given action
+    # NOTE: assumes legal action given
+    x, y = gameState.getAgentState(self.agent.index).getPosition()
+    dx, dy = Actions.directionToVector(action)
+    next_x, next_y = int(x + dx), int(y + dy)
+    
+    # ************************* game features **************************************
+    eatFood = self.agent.getFood(gameState)
+    defendFood = self.agent.getFoodYouAreDefending(gameState)
+    eatCapsules = self.agent.getCapsules(gameState)
+    defendCapsules = self.agent.getCapsulesYouAreDefending(gameState)
+    walls = gameState.getWalls()
+    distribution = self.agent.getDistribution(gameState)
+    possiblePositions = self.agent.getPositions(distribution)
+    # creates a list of each enemy's actual position or, 
+    # if not available, their most likely position
+    enemiesPositions = [gameState.getAgentPosition(enemy) for enemy in self.agent.enemyAgents 
+                        if gameState.getAgentPosition(enemy) is not None 
+                        else possiblePositions[enemy]]
     # Compute distance to the nearest food
-
-    foodList = agent.getFood(successor)
+    foodList = food.asList()
     if len(foodList) > 0: # This should always be True,  but better safe than sorry
       minDistance = min([agent.getMazeDistance(myPos, food) for food in foodList])
       features['distanceToEatFood'] = minDistance
-    foodList = agent.getFoodYouAreDefending(successor)
+    foodMatrix.asList() = agent.getFoodYouAreDefending(gameState)
     if len(foodList) > 0: # This should always be True,  but better safe than sorry
       minDistance = min([agent.getMazeDistance(myPos, food) for food in foodList])
       features['distanceToDefendFood'] = minDistance

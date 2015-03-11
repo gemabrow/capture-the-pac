@@ -10,7 +10,7 @@
 import util
 import random
 import capture
-import captureAgents
+import captureAgent
 import game
 
 class InferenceModule:
@@ -22,9 +22,10 @@ class InferenceModule:
   # Useful methods for all inference modules #
   ############################################
   
-  def __init__(self, enemyIndex, myAgent):
-    "Sets the enemy agent and team indices for later access"
-    self.enemy = enemyIndex
+  def __init__(self, enemyAgent, myAgent):
+    # a class representation of enemy agent that takes into
+    # account both ghost and pacman states -- code at bottom
+    self.enemy = enemyAgent
     self.centered = myAgent
     
   def getPositionDistribution(self, gameState):
@@ -33,8 +34,8 @@ class InferenceModule:
     
     You must first place the enemy in the gameState, using setEnemyPosition below.
     """
-    enemyPosition = gameState.getEnemyPosition(self.enemy) # The position you set
-    actionDist = self.enemy.getDistribution(gameState)
+    enemyPosition = gameState.getEnemyPosition(self.enemy.index) # The position you set
+    actionDist = self.enemy.getDistribution(gameState, self.centered)
     dist = util.Counter()
     for action, prob in actionDist.items():
       successorPosition = game.Actions.getSuccessor(enemyPosition, action)
@@ -48,13 +49,12 @@ class InferenceModule:
     """
     conf = game.Configuration(enemyPosition, game.Directions.STOP)
     
-    isEnemyPacman = True
     # If enemy's position falls in with their home side
     # enemy is a ghost, not a Pacman
     eX, eY = enemyPosition
-    if self.enemyGrid[eX][eY]:
-      isEnemyPacman = False
-    gameState.data.agentStates[self.enemy] = game.AgentState(conf, isEnemyPacman)
+    isEnemyPacman = False if self.enemyGrid[eX][eY] else True
+    self.enemy.setPacman(isEnemyPacman)
+    gameState.data.agentStates[self.enemy.index] = game.AgentState(conf, isEnemyPacman)
     return gameState
   
   def observeState(self, gameState):
@@ -64,13 +64,13 @@ class InferenceModule:
     # ------------------check logic on this part ------------------------------------
     #if len(distances) >= self.enemy: # Check for missing observations
     #  obs = distances[self.index - 1]
-    obs = distances[self.enemy]
+    obs = distances[self.enemy.index]
     self.observe(obs, gameState)
       
   def initialize(self, gameState):
     "Initializes beliefs to a uniform distribution over all positions."
     self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]
-    self.enemyIsRed = gameState.isOnRedTeam(self.enemy)
+    self.enemyIsRed = gameState.isOnRedTeam(self.enemy.index)
     # given the layout and team color, returns a matrix of all positions
     # corresponding to that team color's side
     self.enemyGrid = gameState.halfGrid(gameState.getWalls(), self.enemyIsRed)
@@ -86,7 +86,7 @@ class ExactInference(InferenceModule):
     "Begin with a uniform distribution over enemy positions except for the initial enemypos"
     self.beliefs = util.Counter()
     for position in self.legalPositions: self.beliefs[position] = 1.0
-    intialEnemyPos = gameState.getInitialAgentPosition(self.enemy)
+    intialEnemyPos = gameState.getInitialAgentPosition(self.enemy.index)
     self.beliefs[initialEnemyPos] += 1
     self.beliefs.normalize()
   
@@ -104,7 +104,7 @@ class ExactInference(InferenceModule):
     newBeliefs = util.Counter()
     # where p refers to legalPositions of an enemy
     for p in self.legalPositions:
-      trueDistance = self.centered.getMazeDistance(p, myAgentPos)
+      trueDistance = self.centered.distancer.getDistance(p, myAgentPos)
       if emissionModel(trueDistance) > 0:
         newBeliefs[p] = emissionModel(trueDistance) * self.beliefs[p]
 
@@ -114,44 +114,6 @@ class ExactInference(InferenceModule):
   def elapseTime(self, gameState):
     """
     Update self.beliefs in response to a time step passing from the current state.
-    
-    The transition model is not entirely stationary: it may depend on Pacman's
-    current position (e.g., for DirectionalGhost).  However, this is not a problem,
-    as Pacman's current position is known.
-
-    In order to obtain the distribution over new positions for the
-    enemy, given its previous position (oldPos) as well as Pacman's
-    current position, use this line of code:
-
-      newPosDist = self.getPositionDistribution(self.setEnemyPosition(gameState, oldPos))
-
-    Note that you may need to replace "oldPos" with the correct name
-    of the variable that you have used to refer to the previous enemy
-    position for which you are computing this distribution.
-
-    newPosDist is a util.Counter object, where for each position p in self.legalPositions,
-    
-    newPostDist[p] = Pr( enemy is at position p at time t + 1 | enemy is at position oldPos at time t )
-
-    (and also given Pacman's current position).  You may also find it useful to loop over key, value pairs
-    in newPosDist, like:
-
-      for newPos, prob in newPosDist:
-        ...
-
-    As an implementation detail (with which you need not concern
-    yourself), the line of code above for obtaining newPosDist makes
-    use of two helper methods provided in InferenceModule above:
-
-      1) self.setEnemyPosition(gameState, enemyPosition)
-          This method alters the gameState by placing the enemy we're tracking
-          in a particular position.  This altered gameState can be used to query
-          what the enemy would do in this position.
-      
-      2) self.getPositionDistribution(gameState)
-          This method uses the enemy agent to determine what positions the enemy
-          will move to from the provided gameState.  The enemy must be placed
-          in the gameState with a call to self.setEnemyPosition above.
     """
     newBeliefs = util.Counter()
     
@@ -166,3 +128,68 @@ class ExactInference(InferenceModule):
   def getBeliefDistribution(self):
     return self.beliefs
 
+class EnemyAgent(Agent):
+  """
+  An agent representation of the enemy that takes on different personas
+  given whether it is in a ghost or pacman state
+  """
+  def __init__( self, index, prob_attack=0.8, prob_scaredFlee=0.8):
+    self.index = index
+    self.prob_attack = prob_attack
+    self.prob_scaredFlee = prob_scaredFlee
+    self.evaluationFunction = scoreEvaluation
+    self.isPacman = False
+    assert self.evaluationFunction != None
+  
+  def setPacman( self, isPacman ):
+    self.isPacman = isPacman
+  
+  def getBestActions(state, myAgent):
+    """
+    Depending on my state and enemy state, return list of best actions
+    """
+    # Read variables from state (position is according to that SET by inferenceModule)
+    agentState = state.getAgentState( self.index )
+    legalActions = [for action in state.getLegalActions( self.index ) if not Directions.STOP]
+    # Select best actions given the state
+    bestActions = []
+    if agentState.isPacman:
+      successors = [(state.generateSuccessor( self.index, action), action) for action in legalActions]
+      scored = [(self.evaluationFunction(state), action) for state, action in successors]
+      bestScore = max(scored)[0]
+      bestProb = self.prob_attack
+      bestActions = [pair[1] for pair in scored if pair[0] == bestScore]
+    else:
+      pos = agentState.getPosition()
+      isScared = agentState.scaredTimer > 0
+      speed = 0.5 if isScared else 1
+      
+      actionVectors = [Actions.directionToVector( a, speed ) for a in legalActions]
+      newPositions = [( pos[0]+a[0], pos[1]+a[1] ) for a in actionVectors]
+      myPosition = state.getAgentPosition(myAgent.index)
+      friendPosition = state.getAgentPosition(myAgent.friendIndex)
+      
+      distancesToUs = [MyAgent.distancer.getDistance( pos, myPosition ) for pos in newPositions]
+      distancesToUs.append( MyAgent.distancer.getDistance( pos, friendPosition ) for pos in newPositions )
+      if isScared:
+        bestScore = max( distancesToUs )
+        bestProb = self.prob_scaredFlee
+      else:
+        bestScore = min( distancesToUs )
+        bestProb = self.prob_attack
+      bestActions = [action for action, distance in zip( legalActions, distancesToPacman ) if distance == bestScore]
+      
+    return bestActions
+      
+  def getDistribution( self, state, myAgent):
+
+    bestActions = getBestActions(state)
+    # Construct distribution
+    dist = util.Counter()
+    for a in bestActions: dist[a] = bestProb / len(bestActions)
+    for a in legalActions: dist[a] += ( 1-bestProb ) / len(legalActions)
+    dist.normalize()
+    return dist
+  
+def scoreEvaluation(state):
+  return state.getScore()
