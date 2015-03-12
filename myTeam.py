@@ -8,8 +8,7 @@
 # For more info, see http://inst.eecs.berkeley.edu/~cs188/sp09/pacman.html
 
 from captureAgents import CaptureAgent
-from game import Directions, Actions
-from util import nearestPoint
+from game import Directions, Actions, Agent
 import game
 import inference
 import featureExtractor
@@ -38,10 +37,11 @@ def createTeam(firstIndex, secondIndex, isRed,
   
   # randomize which agent is first or second,
   # just to mix things up
-  random.seed(R1ckR011d)
+  random.seed('R1ckR011d')
   agents = [first, second]
   first = random.choice(agents)
-  second = agent in agents if not first
+  agents.remove(first)
+  second = agents.pop()
   
   # The following line is an example only; feel free to change it.
   return [eval(first)(firstIndex), eval(second)(secondIndex)]
@@ -120,14 +120,41 @@ class BaseAgent(CaptureAgent):
   NOTE: Since the opposing agents' positions are not given (i.e. not
         directly observable)
   '''
-  def __init__( self, inference = "ExactInference", extractor = "MasterExtractor", enemyType = "EnemyAgent"):
-    self.inferenceType = util.lookup(inference, globals())
-    self.featExtractor = util.lookup(extractor, globals())
-    self.enemyType = util.lookup(enemyType, globals())
-    # ******INITIALIZE WEIGHTS TO JSON JUNK HERE *****
+  def __init__( self, index, timeForComputing = .1):
+    CaptureAgent.__init__(self, index, timeForComputing)
     self.QValues = util.Counter()
     self.weights = util.Counter()
-    # *************************************************
+    self.enemyBeliefs = util.Counter()
+    # try reinitializing qvalues and weights
+    # to ascertained values from prior bouts
+    try:
+      with open('qValues') as infile:
+        json_qvalues = json.load(infile)
+        self.QValues = json_qvalues
+    except IOError:
+      print "No file 'qValues' exists."
+    try:
+      with open('weights') as infile:
+        json_weights = json.load(infile)
+        self.weights = json_weights
+    except IOError:
+      print "No file 'weights' exists."
+    
+    # setting indices for team and opponents
+    self.friendIndex = self.index + 2
+    if self.friendIndex > 3:
+      self.friendIndex = self.friendIndex % 2
+    self.registerTeam([self.index, self.friendIndex])
+    self.enemyIndices = [ number for number in range(0, 4) if number not in self.agentsOnTeam ]
+
+    self.inferenceType = inference.ExactInference
+    self.inferenceModules = [ self.inferenceType( index, self ) 
+                             for index in self.enemyIndices ]
+    self.featExtractor = featureExtractor.MasterExtractor(self)
+    # dig in and fix using 'defaultCapture' layout as default
+    self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]   
+    self.enemyPositions = dict(  ( index, gameState.getInitialAgentPosition(index) ) for index in self.enemyIndices  )
+    self.enemyPositions = None
     
   def registerInitialState(self, gameState):
     """
@@ -142,24 +169,11 @@ class BaseAgent(CaptureAgent):
     IMPORTANT: This method may run for at most 15 seconds.
     """
     CaptureAgent.registerInitialState(self, gameState)
-    self.friendIndex = self.index + 2
-    if self.friendIndex > 3:
-      self.friendIndex = self.friendIndex % 2
-    self.enemyIndices = sorted(self.getOpponents(gameState))
-    self.registerTeam([self.index, self.friendIndex])
-    # legalPositions may be unnecessary here --> qLearningAgent instead
-    self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]   
     ########################### inference initialization #############################################
-    self.inferenceModules = [ self.inferenceType( index, self ) 
-                             for index in self.enemyIndices ]
     for inference in self.inferenceModules: inference.initialize(gameState)
     self.enemyBeliefs = [inf.getBeliefDistribution() for inf in self.inferenceModules]
     self.firstMove = True
     ##################################################################################################
-    self.enemyPositions = dict(  ( index, gameState.getInitialAgentPosition(index) ) for index in self.enemyIndices  )
-    # NOTE: Cache of maze distances to every pair of positions
-    # can be accessed by an agent with the following:
-    # self.distancer.getDistance( pos1, pos2 )
     
   def observationFunction(self, gameState):
     return gameState.makeObservation(self.index)
@@ -179,7 +193,6 @@ class BaseAgent(CaptureAgent):
       self.firstMove = False
       inf.observeState(gameState)
       self.enemyBeliefs[index] = inf.getBeliefDistribution()
-    self.displayDistributionsOverPositions(self.enemyBeliefs)
     
     return self.chooseAction(gameState)
   
@@ -215,13 +228,7 @@ class BaseAgent(CaptureAgent):
     # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
 
     
-    agentState = gameState.getAgentState(self.index)
-    myPosition  = agentState.getPosition()
-    legalActions = [a for a in gameState.getLegalActions(self.index)]
-    # potential successor positions for our agent
-    successorPos = [ ( Actions.getSuccessor(myPosition, a), a) for a in legalActions ]
-    # if a ghost's position is not known, use its most probable position (handled in function call)
-    updatePositions(gameState)
+    self.updatePositions(gameState)
     # debugging inference
     self.displayDistributionsOverPositions( self.getDistribution(gameState) )
     valueActions = [(self.evaluate(gameState, a), a) for a in legalActions]
@@ -245,14 +252,24 @@ class BaseAgent(CaptureAgent):
                                   in self.enemyBeliefs]
     return enemyPositionDistributions
     
-  def updatePositions(gameState)
+  def updatePositions(self, gameState):
     """
     From a distribution and what is observable in the current gamestate, 
     update a dict of the most probable positions of each enemy agent
     """
+    agentState = gameState.getAgentState(self.index)
+    myPosition  = agentState.getPosition()
+    legalActions = [a for a in gameState.getLegalActions(self.index)]
+    # potential successor positions for our agent
+    successorPos = [ ( Actions.getSuccessor(myPosition, a), a) for a in legalActions ]
+    # if a ghost's position is not known, use its most probable position (handled in function call)
     distribution = self.getDistribution(gameState)
-    for i, enemyIndex in enumerate(self.enemyAgents):
+    for i, enemyIndex in enumerate(self.enemyIndices):
       self.enemyPositions[enemyIndex] = gameState.getAgentPosition(enemyIndex) if not None else distribution.argMax()[i]
+  
+  def getEnemyPositions(self, gameState):
+    self.updatePositions(gameState)
+    return self.enemyPositions
   
   def getFeatures(self, gameState, action):
     """
@@ -298,7 +315,20 @@ class EphemeralAgent(BaseAgent):
   """
   from capture import CaptureRules
   
-  def __init__(self, alpha=1200, epsilon=0.05, gamma=0.8, numTraining = 10):
+  def __init__( self, index, timeForComputing = .1, 
+               alpha = 1200, epsilon = 0.05, gamma = 0.8, numTraining = 10):
+    BaseAgent.__init__( self, index, timeForComputing )
+    self.alphaNum = float(alpha)
+    self.alphaDen = float(alpha)
+    self.alpha = 1.0
+    self.epsilon = float(epsilon)
+    self.discount = float(gamma)
+    self.numTraining = int(numTraining)
+    self.episodesSoFar = 0
+    self.accumTrainRewards = 0.0
+    self.accumTestRewards = 0.0
+    
+  def registerInitialState(self, gameState):
     """
     Sets options, which can be passed in via the Pacman command line using -a alpha=0.5,...
     alpha    - learning rate
@@ -306,15 +336,7 @@ class EphemeralAgent(BaseAgent):
     gamma    - discount factor
     numTraining - number of training episodes, i.e. no learning after these many episodes
     """
-    self.alphaNum = float(alpha)
-    self.alphaDen = float(alpha)
-    self.alpha = float(alphaNum/alphaDen) # alpha denominator is the length of the game
-    self.epsilon = float(epsilon)
-    self.discount = float(gamma)
-    self.numTraining = int(numTraining)
-    self.episodesSoFar = 0
-    self.accumTrainRewards = 0.0
-    self.accumTestRewards = 0.0
+    BaseAgent.registerInitialState(self, gameState)  
 
   def getValue(self, state):
     """
@@ -323,7 +345,7 @@ class EphemeralAgent(BaseAgent):
       there are no legal actions, which is the case at the
       terminal state, you should return a value of 0.0.
     """
-    legalActions = self.getLegalActions(state)
+    legalActions = state.getLegalActions(self.index)
     if len(legalActions) == 0:
       return 0.0
 
@@ -444,9 +466,9 @@ class EphemeralAgent(BaseAgent):
       Called by environment when episode is done
     """
     if self.episodesSoFar < self.numTraining:
-                  self.accumTrainRewards += self.episodeRewards
+      self.accumTrainRewards += self.episodeRewards
     else:
-                  self.accumTestRewards += self.episodeRewards
+      self.accumTestRewards += self.episodeRewards
     self.episodesSoFar += 1
     if self.episodesSoFar >= self.numTraining:
       # Take off the training wheels
@@ -509,10 +531,12 @@ class EphemeralAgent(BaseAgent):
         self.lastWindowAccumRewards = 0.0
         self.episodeStartTime = time.time()
         
-    # Where we save are accumulated QValues and weights so far
+    # Where we save our accumulated QValues and weights so far
     if self.episodesSoFar == self.numTraining:
-        print json.dump(self.weights)
-        print json.dump(self.QValues)
+        with open('weights', 'w') as outfile:
+          json.dump(self.weights, outfile)
+        with open('qValues', 'w') as outfile:
+          json.dump(self.QValues, outfile)
 
 #******************************************************************************************************************************************************************
 #*************************************************SECONDARY AGENT**************************************************************************************************

@@ -10,8 +10,9 @@
 import util
 import random
 import capture
-import captureAgent
 import game
+from capture import GameState
+from game import Agent
 
 class InferenceModule:
   """
@@ -22,10 +23,10 @@ class InferenceModule:
   # Useful methods for all inference modules #
   ############################################
   
-  def __init__(self, enemyAgent, myAgent):
+  def __init__(self, enemyIndex, myAgent):
     # a class representation of enemy agent that takes into
     # account both ghost and pacman states -- code at bottom
-    self.enemy = enemyAgent
+    self.enemy = EnemyAgent(enemyIndex)
     self.centered = myAgent
     
   def getPositionDistribution(self, gameState):
@@ -73,7 +74,7 @@ class InferenceModule:
     self.enemyIsRed = gameState.isOnRedTeam(self.enemy.index)
     # given the layout and team color, returns a matrix of all positions
     # corresponding to that team color's side
-    self.enemyGrid = gameState.halfGrid(gameState.getWalls(), self.enemyIsRed)
+    self.enemyGrid = capture.halfGrid(gameState.getWalls(), self.enemyIsRed)
     self.initializeUniformly(gameState)
 
 class ExactInference(InferenceModule):
@@ -86,7 +87,7 @@ class ExactInference(InferenceModule):
     "Begin with a uniform distribution over enemy positions except for the initial enemypos"
     self.beliefs = util.Counter()
     for position in self.legalPositions: self.beliefs[position] = 1.0
-    intialEnemyPos = gameState.getInitialAgentPosition(self.enemy.index)
+    initialEnemyPos = gameState.getInitialAgentPosition(self.enemy.index)
     self.beliefs[initialEnemyPos] += 1
     self.beliefs.normalize()
   
@@ -98,7 +99,7 @@ class ExactInference(InferenceModule):
       distance you supply. That is, it returns P(noisyDistance | TrueDistance)
     """
     noisyDistance = observation
-    emissionModel = lambda tD: return gameState.getDistanceProb(tD, noisyDistance)
+    emissionModel = lambda tD: gameState.getDistanceProb(tD, noisyDistance)
     myAgentPos = self.centered.getPosition()
     
     newBeliefs = util.Counter()
@@ -150,7 +151,7 @@ class EnemyAgent(Agent):
     """
     # Read variables from state (position is according to that SET by inferenceModule)
     agentState = state.getAgentState( self.index )
-    legalActions = [for action in state.getLegalActions( self.index ) if not Directions.STOP]
+    legalActions = [action for action in state.getLegalActions( self.index ) if not Directions.STOP]
     # Select best actions given the state
     bestActions = []
     if agentState.isPacman:

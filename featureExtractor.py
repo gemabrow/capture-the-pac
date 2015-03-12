@@ -7,7 +7,9 @@
 # John DeNero (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
 # For more info, see http://inst.eecs.berkeley.edu/~cs188/sp09/pacman.html
 
+from distanceCalculator import Distancer
 from game import Directions, Actions
+from layout import getLayout
 import util
 
 def closestFood(pos, food, walls):
@@ -57,7 +59,10 @@ class MasterExtractor:
   def __init__(self, myAgent):
     # passing in agent should give us access to beliefs
     self.agent = myAgent
-    
+    self.distancer = Distancer( getLayout('defaultCapture') )
+    self.distancer.getMazeDistances()
+    self.enemyPositions = None
+
   def getFeatures(self, gameState, action):
     features = util.Counter()    
     features['bias'] = 1.0
@@ -66,15 +71,16 @@ class MasterExtractor:
     # Computes whether we're on the red or blue team
     features['red'] = 1 if self.agent.red else 0
     # Computes whether we're on defense (1) or offense (0)
-    features['onDefense'] = 1 if self.agent.isPacman else 0
+    features['onDefense'] = 1 if gameState.getAgentState(self.agent.index).isPacman else 0
     # Computes whether our teammate is on defense (1) or offense (0)
-    features['friendOnD'] = 1 if self.agent.friendIndex
+    features['friendOnD'] = 1 if gameState.getAgentState(self.agent.friendIndex).isPacman else 0
 
     # instead of generating successor, find next position given action
     # NOTE: assumes legal action given
     x, y = gameState.getAgentState(self.agent.index).getPosition()
     dx, dy = Actions.directionToVector(action)
     next_x, next_y = int(x + dx), int(y + dy)
+    myPos = next_x, next_y
     
     # ************************* game features **************************************
     eatFood = self.agent.getFood(gameState)
@@ -82,35 +88,38 @@ class MasterExtractor:
     eatCapsules = self.agent.getCapsules(gameState)
     defendCapsules = self.agent.getCapsulesYouAreDefending(gameState)
     walls = gameState.getWalls()
-    distribution = self.agent.getDistribution(gameState)
-    possiblePositions = self.agent.getPositions(distribution)
-    # creates a list of each enemy's actual position or, 
-    # if not available, their most likely position
-    enemiesPositions = [gameState.getAgentPosition(enemy) for enemy in self.agent.enemyAgents 
-                        if gameState.getAgentPosition(enemy) is not None 
-                        else possiblePositions[enemy]]
+    self.enemyPositions = self.agent.getEnemyPositions(gameState)
+
     # Compute distance to the nearest food
-    foodList = food.asList()
+    foodList = eatFood.asList()
     if len(foodList) > 0: # This should always be True,  but better safe than sorry
-      minDistance = min([agent.getMazeDistance(myPos, food) for food in foodList])
+      minDistance = min([self.distancer.getDistance(myPos, food) for food in foodList])
       features['distanceToEatFood'] = minDistance
-    foodMatrix.asList() = agent.getFoodYouAreDefending(gameState)
+    foodList = defendFood.asList()
     if len(foodList) > 0: # This should always be True,  but better safe than sorry
-      minDistance = min([agent.getMazeDistance(myPos, food) for food in foodList])
+      minDistance = min([self.distancer.getDistance(myPos, food) for food in foodList])
       features['distanceToDefendFood'] = minDistance
+    ghosts = [gameState.getAgentState(enemyIndex) for enemyIndex in self.agent.enemyIndices 
+             if not gameState.getAgentState(enemyIndex).isPacman]
+    # count the number of ghosts 1-step away
+    features["#-of-ghosts-1-step-away"] = sum((next_x, next_y) in Actions.getLegalNeighbors(g, walls) for g in ghosts)
+
+    # if there is no danger of ghosts then add the food feature
+    if not features["#-of-ghosts-1-step-away"] and eatFood[next_x][next_y]:
+      features["eats-food"] = 1.0
     
-    enemies = [successor.getAgentState(agent.index) for enemy in agent.enemyAgents]
-    enemyPos = []
-    for enemyState in enemies:
-      enemyPos.append(enemyState.getPosition() if enemyState.getPosition() is not None else 
-    features['nearest-enemy'] = min(successor.getAgentPosition(enemyIndex) for enemyIndex in agent.enemyAgents)
+    enemyDistances = [self.distancer.getDistance(enemyPositions, myPos) for index in self.agent.enemyIndices]
+    print enemyDistances
+    minDistance = min(enemyDistances)
+    features['nearest-enemy-threat'] = minDistance
+    features.normalize()
     return features
-  
+'''  
   def getFeatures(self, gameState, action):
     features = util.Counter()
     # extract the grid of food and wall locations and get the ghost locations
-    food = state.getFood()
-    walls = state.getWalls()
+    food = self.agent.getFood()
+    walls = gameState.getWalls()
     ghosts = state.getGhostPositions()
 
 
@@ -122,12 +131,6 @@ class MasterExtractor:
     dx, dy = Actions.directionToVector(action)
     next_x, next_y = int(x + dx), int(y + dy)
     
-    # count the number of ghosts 1-step away
-    features["#-of-ghosts-1-step-away"] = sum((next_x, next_y) in Actions.getLegalNeighbors(g, walls) for g in ghosts)
-
-    # if there is no danger of ghosts then add the food feature
-    if not features["#-of-ghosts-1-step-away"] and food[next_x][next_y]:
-      features["eats-food"] = 1.0
     
     dist = closestFood((next_x, next_y), food, walls)
     if dist is not None:
@@ -136,3 +139,4 @@ class MasterExtractor:
       features["closest-food"] = float(dist) / (walls.width * walls.height) 
     features.divideAll(10.0)
     return features
+'''
