@@ -151,9 +151,6 @@ class BaseAgent(CaptureAgent):
     self.inferenceModules = [ self.inferenceType( index, self ) 
                              for index in self.enemyIndices ]
     self.featExtractor = featureExtractor.MasterExtractor(self)
-
-    # ONLY returns the INITIAL agent position, just as gameState.getInitialAgentPosition(index) does
-    # self.enemyPositions = dict(  ( index, defaultMap.AgentPosition[index][1] ) for index in self.enemyIndices  )
     
   def registerInitialState(self, gameState):
     """
@@ -168,11 +165,9 @@ class BaseAgent(CaptureAgent):
     IMPORTANT: This method may run for at most 15 seconds.
     """
     CaptureAgent.registerInitialState(self, gameState)
-    print "Red Team: ", gameState.getRedTeamIndices()
     ########################### inference initialization #############################################
     for inference in self.inferenceModules: inference.initialize(gameState)
-    for i, inf in enumerate(self.inferenceModules):
-      self.enemyBeliefs[self.enemyIndices[i]] = inf.getBeliefDistribution()
+    self.enemyBeliefs = [inf.getBeliefDistribution() for inf in self.inferenceModules]
     self.firstMove = True
     ##################################################################################################
     
@@ -199,7 +194,7 @@ class BaseAgent(CaptureAgent):
       if not self.firstMove: inf.elapseTime(gameState)
       self.firstMove = False
       inf.observeState(gameState)
-      self.enemyBeliefs[self.enemyIndices[index]] = inf.getBeliefDistribution()
+      self.enemyBeliefs[index] = inf.getBeliefDistribution()
       
   # NOTE: MOST IMPORTANT function to override
   def chooseAction(self, gameState):
@@ -209,16 +204,18 @@ class BaseAgent(CaptureAgent):
     chooseAction, depending on the agent's state will take the
     action or discard it
     """
-    legal = [ a for a in gameState.getLegalActions(self.index) ]
-    values = [(self.evaluate(gameState, a), a) for a in legal]
-
+    myPos = gameState.getAgentPosition(self.index)
+    legal = gameState.getLegalActions(self.index)
+    successorPosition = [ ( Actions.getSuccessor(myPos, a), a ) for a in legal ]
     enemyPositions = self.getEnemyPositions(gameState)
-    # debugging inference---------------------------------------------------------<<<<<<<<<<<<
-    self.displayDistributionsOverPositions( self.getDistribution(gameState) )
-    valueActions = [(self.evaluate(gameState, a), a) for a in legalActions]
-    maxValue = max(valueActions)[0]
-    bestActions = [a for v, a in valueActions if v == maxValue]
-    return random.choice(bestActions)
+    print enemyPositions
+    
+    minDistanceActionPQ = util.PriorityQueue()
+    for pos, a in successorPosition:
+      for index in self.enemyIndices:
+        minDistanceActionPQ.push( a, self.distancer.getDistance(myPos, enemyPositions[index]) )
+    
+    return minDistanceActionPQ.pop()
     
   def evaluate(self, gameState, action):
     """
@@ -232,7 +229,9 @@ class BaseAgent(CaptureAgent):
     """
     Returns the distribution from beliefs for each enemy in list form
     """
-    enemyDistribution = [ enemyBelief for enemyBelief in self.enemyBeliefs ]
+    enemyDistribution = [ enemyBelief for enemyBelief 
+                         in self.enemyBeliefs ]
+    self.displayDistributionsOverPositions(enemyDistribution)
     return enemyDistribution
   
   def getEnemyPositions(self, gameState):
@@ -241,14 +240,13 @@ class BaseAgent(CaptureAgent):
     returns a dict of the most probable positions of each enemy agent
     """
     enemyPositions = {}
-    myPosition  = gameState.getAgentPosition(self.index)
-    legalActions = [a for a in gameState.getLegalActions(self.index)]
-    # potential successor positions for our agent
-    successorPos = [ ( Actions.getSuccessor(myPosition, a), a) for a in legalActions ]
     distribution = self.getDistribution()
-    for i, enemyIndex in enumerate(self.enemyIndices):
-      enemyPos = gameState.getAgentPosition(enemyIndex)
-      enemyPositions[enemyIndex] = enemyPos if enemyPos != None else distribution.argMax()[i]
+    observedState = self.getCurrentObservation()
+    for i, distribution in enumerate(distribution):
+      enemyPos = observedState.getAgentPosition(self.enemyIndices[i])
+      if enemyPos is None:
+        print "can't be seen"
+      enemyPositions[self.enemyIndices[i]] = enemyPos if enemyPos != None else distribution.argMax()
     return enemyPositions
   
   def getFeatures(self, gameState, action):
