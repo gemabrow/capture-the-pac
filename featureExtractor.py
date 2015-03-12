@@ -101,7 +101,7 @@ class MasterExtractor:
     ghosts = [gameState.getAgentState(enemyIndex) for enemyIndex in self.agent.enemyIndices 
              if not gameState.getAgentState(enemyIndex).isPacman]
     # count the number of ghosts 1-step away
-    features["#-of-ghosts-1-step-away"] = sum((next_x, next_y) in Actions.getLegalNeighbors(g, walls) for g in ghosts)
+    features["#-of-threats-1-step-away"] = sum(myPos in Actions.getLegalNeighbors(g, walls) for g.getPosition() in ghosts)
 
     # if there is no danger of ghosts then add the food feature
     if not features["#-of-ghosts-1-step-away"] and eatFood[next_x][next_y]:

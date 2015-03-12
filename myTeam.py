@@ -180,10 +180,8 @@ class BaseAgent(CaptureAgent):
     """
     # Append current gameState to observation history
     self.observationHistory.append(gameState)
-
     # Updates beliefs
     self.updateBeliefs(gameState)
-    
     return self.chooseAction(gameState)
   
   def updateBeliefs(self, gameState):
@@ -193,7 +191,8 @@ class BaseAgent(CaptureAgent):
     for index, inf in enumerate(self.inferenceModules):
       if not self.firstMove: inf.elapseTime(gameState)
       self.firstMove = False
-      inf.observeState(gameState)
+      observation = gameState.getAgentDistances()
+      inf.observe(observation, gameState)
       self.enemyBeliefs[index] = inf.getBeliefDistribution()
       
   # NOTE: MOST IMPORTANT function to override
@@ -208,14 +207,12 @@ class BaseAgent(CaptureAgent):
     legal = gameState.getLegalActions(self.index)
     successorPosition = [ ( Actions.getSuccessor(myPos, a), a ) for a in legal ]
     enemyPositions = self.getEnemyPositions(gameState)
-    print enemyPositions
     
-    minDistanceActionPQ = util.PriorityQueue()
+    bestActionPQ = util.PriorityQueue()
     for pos, a in successorPosition:
-      for index in self.enemyIndices:
-        minDistanceActionPQ.push( a, self.distancer.getDistance(myPos, enemyPositions[index]) )
-    
-    return minDistanceActionPQ.pop()
+      bestActionPQ.push( a, self.evaluate(gameState, a) )
+    self.displayDistributionsOverPositions(self.getDistribution())
+    return bestActionPQ.pop()
     
   def evaluate(self, gameState, action):
     """
@@ -240,13 +237,8 @@ class BaseAgent(CaptureAgent):
     returns a dict of the most probable positions of each enemy agent
     """
     enemyPositions = {}
-    distribution = self.getDistribution()
-    observedState = self.getCurrentObservation()
-    for i, distribution in enumerate(distribution):
-      enemyPos = observedState.getAgentPosition(self.enemyIndices[i])
-      if enemyPos is None:
-        print "can't be seen"
-      enemyPositions[self.enemyIndices[i]] = enemyPos if enemyPos != None else distribution.argMax()
+    for i, inf in enumerate(self.inferenceModules):
+      enemyPositions[self.enemyIndices[i]] = inf.mostProbablePosition()
     return enemyPositions
   
   def getFeatures(self, gameState, action):
@@ -355,7 +347,8 @@ class BaseAgent(CaptureAgent):
     ## if there are no legal actions, return policy (s.t. policy = None)
     #if len(legalActions) == 0:
       #return policy
-    
+
+    ## enemyPositions = self.getEnemyPositions(gameState)
     ## find the value of the best action
     #bestValue = self.getValue(state)
     #bestActions = []
@@ -384,6 +377,8 @@ class BaseAgent(CaptureAgent):
     #self.doAction(state,action)
     #return action
     #"""
+    ## Append current gameState to observation history
+    #self.observationHistory.append(gameState)
     ## get legal actions, initialize returned action to None
     #legalActions = state.getLegalActions(self.index)
     #action = None
@@ -392,6 +387,8 @@ class BaseAgent(CaptureAgent):
     #if len(legalActions) == 0:
       #return action
     
+    ## Updates beliefs
+    #self.updateBeliefs(gameState)
     ## "With probability self.epsilon, we should take a random action..."
     #if util.flipCoin(self.epsilon):
       #action = random.choice(legalActions)
@@ -508,59 +505,3 @@ class BaseAgent(CaptureAgent):
           #json.dump(self.weights, outfile)
         #with open('qValues', 'w') as outfile:
           #json.dump(self.QValues, outfile)
-
-##******************************************************************************************************************************************************************
-##*************************************************SECONDARY AGENT**************************************************************************************************
-##******************************************************************************************************************************************************************
-
-#class AnotherAgent(BaseAgent):
-  #"""
-  #A secondary agent, playing and reacting to PrimaryAgent's
-  #most recent action taken to achieve the best cooperative outcome
-  #"""
-
-  #def getFeatures(self, gameState, action):
-    #features = util.Counter()
-    #successor = self.getSuccessor(gameState, action)
-
-    #myState = successor.getAgentState(self.index)
-    #myPos = myState.getPosition()
-
-    ## Computes whether we're on defense (1) or offense (0)
-    #features['onDefense'] = 1
-    #if myState.isPacman: features['onDefense'] = 0
-
-    ## Computes distance to invaders we can see
-    #enemies = [successor.getAgentState(i) for i in self.getOpponents(successor)]
-    #invaders = [a for a in enemies if a.isPacman and a.getPosition() != None]
-    #features['numInvaders'] = len(invaders)
-    #if len(invaders) > 0:
-      #dists = [self.getMazeDistance(myPos, a.getPosition()) for a in invaders]
-      #features['invaderDistance'] = min(dists)
-
-    #if action == Directions.STOP: features['stop'] = 1
-    #rev = Directions.REVERSE[gameState.getAgentState(self.index).configuration.direction]
-    #if action == rev: features['reverse'] = 1
-
-    #return features
-
-  #def getWeights(self, gameState, action):
-    #return {'numInvaders': -1000, 'onDefense': 100, 'invaderDistance': -10, 'stop': -100, 'reverse': -2}
-
-##*****************************************************END OF SECONDARY AGENT***************************************************************************************
-##*****************************************************Joint Particle Functions*************************************************************************************
-##******************************************************************************************************************************************************************
-
-##******************************************************************************************************************************************************************
-##******************************************************FEATURE EXTRACTOR BUSINESS**********************************************************************************
-##******************************************************************************************************************************************************************
-
-##******************************************************************************************************************************************************************
-##******************************************************************************************************************************************************************
-##********************************************* POTENTIAL REPRESENTATIONS OF ENEMY AGENTS **************************************************************************
-
-##******************************************************************************************************************************************************************
-##******************************************************************************************************************************************************************
-##******************************************************************************************************************************************************************
-##******************************************************************INFERENCE MODULE BUSINESS***********************************************************************
-
