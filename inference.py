@@ -11,7 +11,6 @@ import util
 import random
 import capture
 import game
-from capture import GameState
 from game import Agent
 
 class InferenceModule:
@@ -26,7 +25,8 @@ class InferenceModule:
   def __init__(self, enemyIndex, myAgent):
     # a class representation of enemy agent that takes into
     # account both ghost and pacman states -- code at bottom
-    self.enemy = EnemyAgent(enemyIndex)
+    self.enemyIsRed = True if enemyIndex in [0, 2] else False
+    self.enemy = EnemyAgent(enemyIndex, self.enemyIsRed)
     self.centered = myAgent
     
   def getPositionDistribution(self, gameState):
@@ -35,7 +35,7 @@ class InferenceModule:
     
     You must first place the enemy in the gameState, using setEnemyPosition below.
     """
-    enemyPosition = gameState.getEnemyPosition(self.enemy.index) # The position you set
+    enemyPosition = gameState.getAgentPosition(self.enemy.index) # The position you set
     actionDist = self.enemy.getDistribution(gameState, self.centered)
     dist = util.Counter()
     for action, prob in actionDist.items():
@@ -53,7 +53,7 @@ class InferenceModule:
     # If enemy's position falls in with their home side
     # enemy is a ghost, not a Pacman
     eX, eY = enemyPosition
-    isEnemyPacman = False if self.enemyGrid[eX][eY] else True
+    isEnemyPacman = True if self.enemyGrid[eX][eY] else False
     self.enemy.setPacman(isEnemyPacman)
     gameState.data.agentStates[self.enemy.index] = game.AgentState(conf, isEnemyPacman)
     return gameState
@@ -71,7 +71,6 @@ class InferenceModule:
   def initialize(self, gameState):
     "Initializes beliefs to a uniform distribution over all positions."
     self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]
-    self.enemyIsRed = gameState.isOnRedTeam(self.enemy.index)
     # given the layout and team color, returns a matrix of all positions
     # corresponding to that team color's side
     self.enemyGrid = capture.halfGrid(gameState.getWalls(), self.enemyIsRed)
@@ -100,7 +99,7 @@ class ExactInference(InferenceModule):
     """
     noisyDistance = observation
     emissionModel = lambda tD: gameState.getDistanceProb(tD, noisyDistance)
-    myAgentPos = self.centered.getPosition()
+    myAgentPos = gameState.getAgentPosition(self.centered.index)
     
     newBeliefs = util.Counter()
     # where p refers to legalPositions of an enemy
@@ -134,29 +133,31 @@ class EnemyAgent(Agent):
   An agent representation of the enemy that takes on different personas
   given whether it is in a ghost or pacman state
   """
-  def __init__( self, index, prob_attack=0.8, prob_scaredFlee=0.8):
+  def __init__( self, index, red, prob_attack=0.8, prob_scaredFlee=0.8):
     self.index = index
+    self.redFactor = 1 if red else -1
     self.prob_attack = prob_attack
     self.prob_scaredFlee = prob_scaredFlee
-    self.evaluationFunction = scoreEvaluation
     self.isPacman = False
-    assert self.evaluationFunction != None
   
   def setPacman( self, isPacman ):
     self.isPacman = isPacman
   
-  def getBestActions(state, myAgent):
+  def getBestActions(self, gameState, myAgent, legalActions):
     """
     Depending on my state and enemy state, return list of best actions
     """
     # Read variables from state (position is according to that SET by inferenceModule)
-    agentState = state.getAgentState( self.index )
-    legalActions = [action for action in state.getLegalActions( self.index ) if not Directions.STOP]
-    # Select best actions given the state
+    agentState = gameState.getAgentState( self.index )
+    print agentState
+    legalActions = [action for action in gameState.getLegalActions( self.index ) if not game.Directions.STOP]
+    # Select best actions given the gameState
     bestActions = []
     if agentState.isPacman:
-      successors = [(state.generateSuccessor( self.index, action), action) for action in legalActions]
-      scored = [(self.evaluationFunction(state), action) for state, action in successors]
+      successors = [(gameState.generateSuccessor( self.index, action), action) for action in legalActions]
+      print "successors : ", successors
+      scored = [(gameState.getScore() * self.redFactor, action) for gameState, action in successors]
+      print "scored : ", scored
       bestScore = max(scored)[0]
       bestProb = self.prob_attack
       bestActions = [pair[1] for pair in scored if pair[0] == bestScore]
@@ -167,8 +168,8 @@ class EnemyAgent(Agent):
       
       actionVectors = [Actions.directionToVector( a, speed ) for a in legalActions]
       newPositions = [( pos[0]+a[0], pos[1]+a[1] ) for a in actionVectors]
-      myPosition = state.getAgentPosition(myAgent.index)
-      friendPosition = state.getAgentPosition(myAgent.friendIndex)
+      myPosition = gameState.getAgentPosition(myAgent.index)
+      friendPosition = gameState.getAgentPosition(myAgent.friendIndex)
       
       distancesToUs = [MyAgent.distancer.getDistance( pos, myPosition ) for pos in newPositions]
       distancesToUs.append( MyAgent.distancer.getDistance( pos, friendPosition ) for pos in newPositions )
@@ -178,13 +179,13 @@ class EnemyAgent(Agent):
       else:
         bestScore = min( distancesToUs )
         bestProb = self.prob_attack
-      bestActions = [action for action, distance in zip( legalActions, distancesToPacman ) if distance == bestScore]
+      bestActions = [action for action, distance in zip( legalActions, distancesToUs ) if distance == bestScore]
       
     return bestActions
       
-  def getDistribution( self, state, myAgent):
-
-    bestActions = getBestActions(state)
+  def getDistribution( self, gameState, myAgent):
+    legalActions = [action for action in gameState.getLegalActions( self.index ) if not game.Directions.STOP]
+    bestActions = self.getBestActions(gameState, myAgent, legalActions)
     # Construct distribution
     dist = util.Counter()
     for a in bestActions: dist[a] = bestProb / len(bestActions)
@@ -192,5 +193,5 @@ class EnemyAgent(Agent):
     dist.normalize()
     return dist
   
-def scoreEvaluation(state):
-  return state.getScore()
+def scoreEvaluation(gameState):
+  return gameState.getScore()

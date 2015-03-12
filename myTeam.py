@@ -10,6 +10,7 @@
 from captureAgents import CaptureAgent
 from game import Directions, Actions, Agent
 import game
+import layout
 import inference
 import featureExtractor
 import random, time, util, json
@@ -19,7 +20,7 @@ import random, time, util, json
 #################
 
 def createTeam(firstIndex, secondIndex, isRed,
-               first = 'EphemeralAgent', second = 'AnotherAgent'):
+               first = 'BaseAgent', second = 'BaseAgent'):
   """
   This function should return a list of two agents that will form the
   team, initialized using firstIndex and secondIndex as their agent
@@ -146,15 +147,13 @@ class BaseAgent(CaptureAgent):
       self.friendIndex = self.friendIndex % 2
     self.registerTeam([self.index, self.friendIndex])
     self.enemyIndices = [ number for number in range(0, 4) if number not in self.agentsOnTeam ]
-
     self.inferenceType = inference.ExactInference
     self.inferenceModules = [ self.inferenceType( index, self ) 
                              for index in self.enemyIndices ]
     self.featExtractor = featureExtractor.MasterExtractor(self)
-    # dig in and fix using 'defaultCapture' layout as default
-    self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]   
-    self.enemyPositions = dict(  ( index, gameState.getInitialAgentPosition(index) ) for index in self.enemyIndices  )
-    self.enemyPositions = None
+
+    # ONLY returns the INITIAL agent position, just as gameState.getInitialAgentPosition(index) does
+    # self.enemyPositions = dict(  ( index, defaultMap.AgentPosition[index][1] ) for index in self.enemyIndices  )
     
   def registerInitialState(self, gameState):
     """
@@ -169,9 +168,11 @@ class BaseAgent(CaptureAgent):
     IMPORTANT: This method may run for at most 15 seconds.
     """
     CaptureAgent.registerInitialState(self, gameState)
+    print "Red Team: ", gameState.getRedTeamIndices()
     ########################### inference initialization #############################################
     for inference in self.inferenceModules: inference.initialize(gameState)
-    self.enemyBeliefs = [inf.getBeliefDistribution() for inf in self.inferenceModules]
+    for i, inf in enumerate(self.inferenceModules):
+      self.enemyBeliefs[self.enemyIndices[i]] = inf.getBeliefDistribution()
     self.firstMove = True
     ##################################################################################################
     
@@ -180,56 +181,39 @@ class BaseAgent(CaptureAgent):
   
   def getAction(self, gameState):
     """
-    Calls chooseAction on a grid position, but continues on half positions,
-    while updating beliefs. Sends resulting update to choose an action based
-    on updated beliefs if not in a halfway position.
+    Calls to update beliefs, then chooses an action
     """
     # Append current gameState to observation history
     self.observationHistory.append(gameState)
 
     # Updates beliefs
+    self.updateBeliefs(gameState)
+    
+    return self.chooseAction(gameState)
+  
+  def updateBeliefs(self, gameState):
+    """
+    Updates self.enemyBeliefs
+    """
     for index, inf in enumerate(self.inferenceModules):
       if not self.firstMove: inf.elapseTime(gameState)
       self.firstMove = False
       inf.observeState(gameState)
-      self.enemyBeliefs[index] = inf.getBeliefDistribution()
-    
-    return self.chooseAction(gameState)
-  
+      self.enemyBeliefs[self.enemyIndices[index]] = inf.getBeliefDistribution()
+      
   # NOTE: MOST IMPORTANT function to override
   def chooseAction(self, gameState):
     """
-    By default, picks among the actions with the highest Q(s,a).
+    Gets the most likely positions of each enemy and returns an
+    action to get closer to the closest enemy
+    chooseAction, depending on the agent's state will take the
+    action or discard it
     """
     legal = [ a for a in gameState.getLegalActions(self.index) ]
     values = [(self.evaluate(gameState, a), a) for a in legal]
-    
-    #**************************************************************************************
-    #********************** may want to change this ***************************************
-    #***************** could act as a good defense agent **********************************
-    #**************************************************************************************
-    # PriorityQueue for maintaining action towards/away closest ghost
-    #distanceActionPQ = util.PriorityQueue()
-    #
-    #if agent is a ghost and not scared
-    #if agent is a ghost
-    #if agent is pacman
-    #|_____\ move all of this to either
-    #      / evaluate() or getFeatures()
-    #for agentPos, action in successorPosition:
-    #  for enemyPos in possibleEnemyPositions:
-    #    distanceActionPQ.push( action, self.distancer.getDistance(agentPos, enemyPos) )
-    # 
-    #return minDistanceActionPQ.pop()
-    #**************************************************************************************
-    
-    # You can profile your evaluation time by uncommenting these lines
-    # start = time.time()
-    # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
 
-    
-    self.updatePositions(gameState)
-    # debugging inference
+    enemyPositions = self.getEnemyPositions(gameState)
+    # debugging inference---------------------------------------------------------<<<<<<<<<<<<
     self.displayDistributionsOverPositions( self.getDistribution(gameState) )
     valueActions = [(self.evaluate(gameState, a), a) for a in legalActions]
     maxValue = max(valueActions)[0]
@@ -244,32 +228,28 @@ class BaseAgent(CaptureAgent):
     weights = self.getWeights(gameState, action)
     return features * weights
   
-  def getDistribution(self, gameState):
+  def getDistribution(self):
     """
-    Returns the position distribution
+    Returns the distribution from beliefs for each enemy in list form
     """
-    enemyPositionDistributions = [enemyBelief for enemyBelief 
-                                  in self.enemyBeliefs]
-    return enemyPositionDistributions
-    
-  def updatePositions(self, gameState):
+    enemyDistribution = [ enemyBelief for enemyBelief in self.enemyBeliefs ]
+    return enemyDistribution
+  
+  def getEnemyPositions(self, gameState):
     """
     From a distribution and what is observable in the current gamestate, 
-    update a dict of the most probable positions of each enemy agent
+    returns a dict of the most probable positions of each enemy agent
     """
-    agentState = gameState.getAgentState(self.index)
-    myPosition  = agentState.getPosition()
+    enemyPositions = {}
+    myPosition  = gameState.getAgentPosition(self.index)
     legalActions = [a for a in gameState.getLegalActions(self.index)]
     # potential successor positions for our agent
     successorPos = [ ( Actions.getSuccessor(myPosition, a), a) for a in legalActions ]
-    # if a ghost's position is not known, use its most probable position (handled in function call)
-    distribution = self.getDistribution(gameState)
+    distribution = self.getDistribution()
     for i, enemyIndex in enumerate(self.enemyIndices):
-      self.enemyPositions[enemyIndex] = gameState.getAgentPosition(enemyIndex) if not None else distribution.argMax()[i]
-  
-  def getEnemyPositions(self, gameState):
-    self.updatePositions(gameState)
-    return self.enemyPositions
+      enemyPos = gameState.getAgentPosition(enemyIndex)
+      enemyPositions[enemyIndex] = enemyPos if enemyPos != None else distribution.argMax()[i]
+    return enemyPositions
   
   def getFeatures(self, gameState, action):
     """
@@ -293,303 +273,296 @@ class BaseAgent(CaptureAgent):
     Finds the next successor which is a grid position (location tuple).
     """
     successor = gameState.generateSuccessor(self.index, action)
-    pos = successor.getAgentState(self.index).getPosition()
-    if pos != nearestPoint(pos):
-      # Only half a grid position was covered
-      return successor.generateSuccessor(self.index, action)
-    else:
-      return successor
+    return successor
     
-class EphemeralAgent(BaseAgent):
-  """
-  A qlearning agent.
+#class EphemeralAgent(BaseAgent):
+  #"""
+  #A qlearning agent.
   
-  *** IDEA: use combination of P3 - Question 9 and imported/exported JSON data
-  ***       - for training phase, utilize greedy agent from P4
-  ***       - readjust weights  for q learning in execution phase
-  ***         s.t. learning rate starts off at its largest in initial
-  ***         game and descalates rapidly
-  ***         learning rate = 1/(i**2), where i is index of games n, 1 <= i <= n
-  *** TODO: Double check efficacy of passing in self to featExtractor
-  ***       i.e. featExtractor.getFeatures(state, self, action)
-  """
-  from capture import CaptureRules
+  #*** IDEA: use combination of P3 - Question 9 and imported/exported JSON data
+  #***       - for training phase, utilize greedy agent from P4
+  #***       - readjust weights  for q learning in execution phase
+  #***         s.t. learning rate starts off at its largest in initial
+  #***         game and descalates rapidly
+  #***         learning rate = 1/(i**2), where i is index of games n, 1 <= i <= n
+  #*** TODO: Double check efficacy of passing in self to featExtractor
+  #***       i.e. featExtractor.getFeatures(state, self, action)
+  #"""
+  #from capture import CaptureRules
   
-  def __init__( self, index, timeForComputing = .1, 
-               alpha = 1200, epsilon = 0.05, gamma = 0.8, numTraining = 10):
-    BaseAgent.__init__( self, index, timeForComputing )
-    self.alphaNum = float(alpha)
-    self.alphaDen = float(alpha)
-    self.alpha = 1.0
-    self.epsilon = float(epsilon)
-    self.discount = float(gamma)
-    self.numTraining = int(numTraining)
-    self.episodesSoFar = 0
-    self.accumTrainRewards = 0.0
-    self.accumTestRewards = 0.0
+  #def __init__( self, index, timeForComputing = .1, 
+               #alpha = 1200, epsilon = 0.05, gamma = 0.8, numTraining = 10):
+    #BaseAgent.__init__( self, index, timeForComputing )
+    #self.alphaNum = float(alpha)
+    #self.alphaDen = float(alpha)
+    #self.alpha = 1.0
+    #self.epsilon = float(epsilon)
+    #self.discount = float(gamma)
+    #self.numTraining = int(numTraining)
+    #self.episodesSoFar = 0
+    #self.accumTrainRewards = 0.0
+    #self.accumTestRewards = 0.0
     
-  def registerInitialState(self, gameState):
-    """
-    Sets options, which can be passed in via the Pacman command line using -a alpha=0.5,...
-    alpha    - learning rate
-    epsilon  - exploration rate
-    gamma    - discount factor
-    numTraining - number of training episodes, i.e. no learning after these many episodes
-    """
-    BaseAgent.registerInitialState(self, gameState)  
+  #def registerInitialState(self, gameState):
+    #"""
+    #Sets options, which can be passed in via the Pacman command line using -a alpha=0.5,...
+    #alpha    - learning rate
+    #epsilon  - exploration rate
+    #gamma    - discount factor
+    #numTraining - number of training episodes, i.e. no learning after these many episodes
+    #"""
+    #BaseAgent.registerInitialState(self, gameState)
+    #self.startEpisode()
+    #if self.episodesSoFar == 0:
+        #print 'Beginning %d episodes of Training' % (self.numTraining)
 
-  def getValue(self, state):
-    """
-      Returns max_action Q(state,action)
-      where the max is over legal actions.  Note that if
-      there are no legal actions, which is the case at the
-      terminal state, you should return a value of 0.0.
-    """
-    legalActions = state.getLegalActions(self.index)
-    if len(legalActions) == 0:
-      return 0.0
+  #def getValue(self, state):
+    #"""
+      #Returns max_action Q(state,action)
+      #where the max is over legal actions.  Note that if
+      #there are no legal actions, which is the case at the
+      #terminal state, you should return a value of 0.0.
+    #"""
+    #legalActions = state.getLegalActions(self.index)
+    #if len(legalActions) == 0:
+      #return 0.0
 
-    # creates a list of all Q Values for legal actions from current state
-    qValues = [self.getQValue(state, action) for action in state.getLegalActions(self.index)]
-    # returns the max from aforementioned list
-    return max(qValues)
+    ## creates a list of all Q Values for legal actions from current state
+    #qValues = [self.getQValue(state, action) for action in state.getLegalActions(self.index)]
+    ## returns the max from aforementioned list
+    #return max(qValues)
       
-  def getQValue(self, state, action):
-    """
-      Should return Q(state,action) = w * featureVector
-      where * is the dotProduct operator
-    """
-    QValue = 0.0
-    # extract feature vectors
-    featureVectors = self.featExtractor.getFeatures(state, action)
-    # perform dotProduct multiplication
-    for fV in featureVectors:
-      QValue += featureVectors[fV] * self.weights[fV]
-    return QValue
+  #def getQValue(self, state, action):
+    #"""
+      #Should return Q(state,action) = w * featureVector
+      #where * is the dotProduct operator
+    #"""
+    #QValue = 0.0
+    ## extract feature vectors
+    #featureVectors = self.featExtractor.getFeatures(state, action)
+    ## perform dotProduct multiplication
+    #for fV in featureVectors:
+      #QValue += featureVectors[fV] * self.weights[fV]
+    #return QValue
 
-  def getPolicy(self, state):
-    """
-      Compute the best action to take in a state.  Note that if there
-      are no legal actions, which is the case at the terminal state,
-      you should return None.
-    """
-    # intialize policy to None
-    policy = None
-    legalActions = state.getLegalActions(self.index)
-    # if there are no legal actions, return policy (s.t. policy = None)
-    if len(legalActions) == 0:
-      return policy
+  #def getPolicy(self, state):
+    #"""
+      #Compute the best action to take in a state.  Note that if there
+      #are no legal actions, which is the case at the terminal state,
+      #you should return None.
+    #"""
+    ## intialize policy to None
+    #policy = None
+    #legalActions = state.getLegalActions(self.index)
+    ## if there are no legal actions, return policy (s.t. policy = None)
+    #if len(legalActions) == 0:
+      #return policy
     
-    # find the value of the best action
-    bestValue = self.getValue(state)
-    bestActions = []
-    for action in legalActions:
-      # access QValue in this way due to "Important" note in getQValue
-      thisValue = self.getQValue(state, action)
-      # if the value matches that of the best action, append
-      # NOTE: since there may be multiple actions that have
-      # the "best value" to them, we append all actions
-      # that share this attribute
-      if thisValue == bestValue:
-        bestActions.append(action)
+    ## find the value of the best action
+    #bestValue = self.getValue(state)
+    #bestActions = []
+    #for action in legalActions:
+      ## access QValue in this way due to "Important" note in getQValue
+      #thisValue = self.getQValue(state, action)
+      ## if the value matches that of the best action, append
+      ## NOTE: since there may be multiple actions that have
+      ## the "best value" to them, we append all actions
+      ## that share this attribute
+      #if thisValue == bestValue:
+        #bestActions.append(action)
     
-    # choose a random action from the list of actions
-    # associated with the best value
-    policy = random.choice(bestActions)
-    return policy
+    ## choose a random action from the list of actions
+    ## associated with the best value
+    #policy = random.choice(bestActions)
+    #return policy
 
-  def getAction(self, state):
-    """
-    Simply calls the getAction method of QLearningAgent and then
-    informs parent of action for Pacman.  Do not change or remove this
-    method.
+  #def getAction(self, state):
+    #"""
+    #Simply calls the getAction method of QLearningAgent and then
+    #informs parent of action for Pacman.  Do not change or remove this
+    #method.
     
-    action = QlearningAgent.getAction(self,state)
-    self.doAction(state,action)
-    return action
-    """
-    # get legal actions, initialize returned action to None
-    legalActions = state.getLegalActions(self.index)
-    action = None
+    #action = QlearningAgent.getAction(self,state)
+    #self.doAction(state,action)
+    #return action
+    #"""
+    ## get legal actions, initialize returned action to None
+    #legalActions = state.getLegalActions(self.index)
+    #action = None
     
-    # if there are no legal actions, return action (s.t. action = None)
-    if len(legalActions) == 0:
-      return action
+    ## if there are no legal actions, return action (s.t. action = None)
+    #if len(legalActions) == 0:
+      #return action
     
-    # "With probability self.epsilon, we should take a random action..."
-    if util.flipCoin(self.epsilon):
-      action = random.choice(legalActions)
-    # "...and take the best policy action otherwise."
-    else:
-      action = self.getPolicy(state)
+    ## "With probability self.epsilon, we should take a random action..."
+    #if util.flipCoin(self.epsilon):
+      #action = random.choice(legalActions)
+    ## "...and take the best policy action otherwise."
+    #else:
+      #action = self.getPolicy(state)
       
-    return action
+    #return action
 
-  def update(self, state, action, nextState, reward):
-    """
-       Should update your weights based on transition
-    """
-    # correction = ( R(s,a) + gamma * V(s') ) - Q(s,a)
-    # changes the learning factor such that it is more extreme
-    # towards the beginning of a round and levels out over time
-    # reinitializes denominator of alpha if time args passed in
-    if state.data.timeleft > self.alphaDen:
-      self.alphaDen = state.data.timeleft
-    self.alphaNum = state.data.timeleft
-    self.alpha = float(alphaNum/alphaDen)
-    correction = reward + self.discount * self.getValue(nextState) - self.getQValue(state, action)
+  #def update(self, state, action, nextState, reward):
+    #"""
+       #Should update your weights based on transition
+    #"""
+    ## correction = ( R(s,a) + gamma * V(s') ) - Q(s,a)
+    ## changes the learning factor such that it is more extreme
+    ## towards the beginning of a round and levels out over time
+    ## reinitializes denominator of alpha if time args passed in
+    #if state.data.timeleft > self.alphaDen:
+      #self.alphaDen = state.data.timeleft
+    #self.alphaNum = state.data.timeleft
+    #self.alpha = float(alphaNum/alphaDen)
+    #correction = reward + self.discount * self.getValue(nextState) - self.getQValue(state, action)
     
-    featureVectors = self.featExtractor.getFeatures(state, action)
-    for fV in featureVectors:
-      # w_i <- w_i + alpha * [correction] * f_i(s,a)
-      self.weights[fV] += self.alpha * correction * featureVectors[fV]
+    #featureVectors = self.featExtractor.getFeatures(state, action)
+    #for fV in featureVectors:
+      ## w_i <- w_i + alpha * [correction] * f_i(s,a)
+      #self.weights[fV] += self.alpha * correction * featureVectors[fV]
       
-  def observeTransition(self, state,action,nextState,deltaReward):
-    """
-        Called by environment to inform agent that a transition has
-        been observed. This will result in a call to self.update
-        on the same arguments
-    """
-    self.episodeRewards += deltaReward
-    self.update(state,action,nextState,deltaReward)
+  #def observeTransition(self, state,action,nextState,deltaReward):
+    #"""
+        #Called by environment to inform agent that a transition has
+        #been observed. This will result in a call to self.update
+        #on the same arguments
+    #"""
+    #self.episodeRewards += deltaReward
+    #self.update(state,action,nextState,deltaReward)
 
-  def startEpisode(self):
-    """
-      Called by environment when new episode is starting
-    """
-    self.lastState = None
-    self.lastAction = None
-    self.episodeRewards = 0.0
+  #def startEpisode(self):
+    #"""
+      #Called by environment when new episode is starting
+    #"""
+    #self.lastState = None
+    #self.lastAction = None
+    #self.episodeRewards = 0.0
 
-  def stopEpisode(self):
-    """
-      Called by environment when episode is done
-    """
-    if self.episodesSoFar < self.numTraining:
-      self.accumTrainRewards += self.episodeRewards
-    else:
-      self.accumTestRewards += self.episodeRewards
-    self.episodesSoFar += 1
-    if self.episodesSoFar >= self.numTraining:
-      # Take off the training wheels
-      self.epsilon = 0.0    # no exploration
-      self.alpha = 0.0      # no learning
+  #def stopEpisode(self):
+    #"""
+      #Called by environment when episode is done
+    #"""
+    #if self.episodesSoFar < self.numTraining:
+      #self.accumTrainRewards += self.episodeRewards
+    #else:
+      #self.accumTestRewards += self.episodeRewards
+    #self.episodesSoFar += 1
+    #if self.episodesSoFar >= self.numTraining:
+      ## Take off the training wheels
+      #self.epsilon = 0.0    # no exploration
+      #self.alpha = 0.0      # no learning
 
-  def isInTraining(self):
-      return self.episodesSoFar < self.numTraining
+  #def isInTraining(self):
+      #return self.episodesSoFar < self.numTraining
 
-  def isInTesting(self):
-      return not self.isInTraining()
+  #def isInTesting(self):
+      #return not self.isInTraining()
     
-  def observationFunction(self, state):
-    """
-        This is where we ended up after our last action.
-        The simulation should somehow ensure this is called
-    """
-    if not self.lastState is None:
-        reward = state.getScore() - self.lastState.getScore()
-        self.observeTransition(self.lastState, self.lastAction, state, reward)
-    return state
+  #def observationFunction(self, state):
+    #"""
+        #This is where we ended up after our last action.
+        #The simulation should somehow ensure this is called
+    #"""
+    #if not self.lastState is None:
+        #reward = state.getScore() - self.lastState.getScore()
+        #self.observeTransition(self.lastState, self.lastAction, state, reward)
+    #return state
 
-  def registerInitialState(self, state):
-    self.startEpisode()
-    if self.episodesSoFar == 0:
-        print 'Beginning %d episodes of Training' % (self.numTraining)
+  #def final(self, state):
+    #"""
+      #Called by Pacman game at the terminal state
+    #"""
+    #deltaReward = state.getScore() - self.lastState.getScore()
+    #self.observeTransition(self.lastState, self.lastAction, state, deltaReward)
+    #self.stopEpisode()
 
-  def final(self, state):
-    """
-      Called by Pacman game at the terminal state
-    """
-    deltaReward = state.getScore() - self.lastState.getScore()
-    self.observeTransition(self.lastState, self.lastAction, state, deltaReward)
-    self.stopEpisode()
+    ## Make sure we have this var
+    #if not 'episodeStartTime' in self.__dict__:
+        #self.episodeStartTime = time.time()
+    #if not 'lastWindowAccumRewards' in self.__dict__:
+        #self.lastWindowAccumRewards = 0.0
+    #self.lastWindowAccumRewards += state.getScore()
 
-    # Make sure we have this var
-    if not 'episodeStartTime' in self.__dict__:
-        self.episodeStartTime = time.time()
-    if not 'lastWindowAccumRewards' in self.__dict__:
-        self.lastWindowAccumRewards = 0.0
-    self.lastWindowAccumRewards += state.getScore()
-
-    NUM_EPS_UPDATE = 100
-    if self.episodesSoFar % NUM_EPS_UPDATE == 0:
-        print 'Reinforcement Learning Status:'
-        windowAvg = self.lastWindowAccumRewards / float(NUM_EPS_UPDATE)
-        if self.episodesSoFar <= self.numTraining:
-            trainAvg = self.accumTrainRewards / float(self.episodesSoFar)
-            print '\tCompleted %d out of %d training episodes' % (
-                   self.episodesSoFar,self.numTraining)
-            print '\tAverage Rewards over all training: %.2f' % (
-                    trainAvg)
-        else:
-            testAvg = float(self.accumTestRewards) / (self.episodesSoFar - self.numTraining)
-            print '\tCompleted %d test episodes' % (self.episodesSoFar - self.numTraining)
-            print '\tAverage Rewards over testing: %.2f' % testAvg
-        print '\tAverage Rewards for last %d episodes: %.2f'  % (
-                NUM_EPS_UPDATE,windowAvg)
-        print '\tEpisode took %.2f seconds' % (time.time() - self.episodeStartTime)
-        self.lastWindowAccumRewards = 0.0
-        self.episodeStartTime = time.time()
+    #NUM_EPS_UPDATE = 100
+    #if self.episodesSoFar % NUM_EPS_UPDATE == 0:
+        #print 'Reinforcement Learning Status:'
+        #windowAvg = self.lastWindowAccumRewards / float(NUM_EPS_UPDATE)
+        #if self.episodesSoFar <= self.numTraining:
+            #trainAvg = self.accumTrainRewards / float(self.episodesSoFar)
+            #print '\tCompleted %d out of %d training episodes' % (
+                   #self.episodesSoFar,self.numTraining)
+            #print '\tAverage Rewards over all training: %.2f' % (
+                    #trainAvg)
+        #else:
+            #testAvg = float(self.accumTestRewards) / (self.episodesSoFar - self.numTraining)
+            #print '\tCompleted %d test episodes' % (self.episodesSoFar - self.numTraining)
+            #print '\tAverage Rewards over testing: %.2f' % testAvg
+        #print '\tAverage Rewards for last %d episodes: %.2f'  % (
+                #NUM_EPS_UPDATE,windowAvg)
+        #print '\tEpisode took %.2f seconds' % (time.time() - self.episodeStartTime)
+        #self.lastWindowAccumRewards = 0.0
+        #self.episodeStartTime = time.time()
         
-    # Where we save our accumulated QValues and weights so far
-    if self.episodesSoFar == self.numTraining:
-        with open('weights', 'w') as outfile:
-          json.dump(self.weights, outfile)
-        with open('qValues', 'w') as outfile:
-          json.dump(self.QValues, outfile)
+    ## Where we save our accumulated QValues and weights so far
+    #if self.episodesSoFar == self.numTraining:
+        #with open('weights', 'w') as outfile:
+          #json.dump(self.weights, outfile)
+        #with open('qValues', 'w') as outfile:
+          #json.dump(self.QValues, outfile)
 
-#******************************************************************************************************************************************************************
-#*************************************************SECONDARY AGENT**************************************************************************************************
-#******************************************************************************************************************************************************************
+##******************************************************************************************************************************************************************
+##*************************************************SECONDARY AGENT**************************************************************************************************
+##******************************************************************************************************************************************************************
 
-class AnotherAgent(BaseAgent):
-  """
-  A secondary agent, playing and reacting to PrimaryAgent's
-  most recent action taken to achieve the best cooperative outcome
-  """
+#class AnotherAgent(BaseAgent):
+  #"""
+  #A secondary agent, playing and reacting to PrimaryAgent's
+  #most recent action taken to achieve the best cooperative outcome
+  #"""
 
-  def getFeatures(self, gameState, action):
-    features = util.Counter()
-    successor = self.getSuccessor(gameState, action)
+  #def getFeatures(self, gameState, action):
+    #features = util.Counter()
+    #successor = self.getSuccessor(gameState, action)
 
-    myState = successor.getAgentState(self.index)
-    myPos = myState.getPosition()
+    #myState = successor.getAgentState(self.index)
+    #myPos = myState.getPosition()
 
-    # Computes whether we're on defense (1) or offense (0)
-    features['onDefense'] = 1
-    if myState.isPacman: features['onDefense'] = 0
+    ## Computes whether we're on defense (1) or offense (0)
+    #features['onDefense'] = 1
+    #if myState.isPacman: features['onDefense'] = 0
 
-    # Computes distance to invaders we can see
-    enemies = [successor.getAgentState(i) for i in self.getOpponents(successor)]
-    invaders = [a for a in enemies if a.isPacman and a.getPosition() != None]
-    features['numInvaders'] = len(invaders)
-    if len(invaders) > 0:
-      dists = [self.getMazeDistance(myPos, a.getPosition()) for a in invaders]
-      features['invaderDistance'] = min(dists)
+    ## Computes distance to invaders we can see
+    #enemies = [successor.getAgentState(i) for i in self.getOpponents(successor)]
+    #invaders = [a for a in enemies if a.isPacman and a.getPosition() != None]
+    #features['numInvaders'] = len(invaders)
+    #if len(invaders) > 0:
+      #dists = [self.getMazeDistance(myPos, a.getPosition()) for a in invaders]
+      #features['invaderDistance'] = min(dists)
 
-    if action == Directions.STOP: features['stop'] = 1
-    rev = Directions.REVERSE[gameState.getAgentState(self.index).configuration.direction]
-    if action == rev: features['reverse'] = 1
+    #if action == Directions.STOP: features['stop'] = 1
+    #rev = Directions.REVERSE[gameState.getAgentState(self.index).configuration.direction]
+    #if action == rev: features['reverse'] = 1
 
-    return features
+    #return features
 
-  def getWeights(self, gameState, action):
-    return {'numInvaders': -1000, 'onDefense': 100, 'invaderDistance': -10, 'stop': -100, 'reverse': -2}
+  #def getWeights(self, gameState, action):
+    #return {'numInvaders': -1000, 'onDefense': 100, 'invaderDistance': -10, 'stop': -100, 'reverse': -2}
 
-#*****************************************************END OF SECONDARY AGENT***************************************************************************************
-#*****************************************************Joint Particle Functions*************************************************************************************
-#******************************************************************************************************************************************************************
+##*****************************************************END OF SECONDARY AGENT***************************************************************************************
+##*****************************************************Joint Particle Functions*************************************************************************************
+##******************************************************************************************************************************************************************
 
-#******************************************************************************************************************************************************************
-#******************************************************FEATURE EXTRACTOR BUSINESS**********************************************************************************
-#******************************************************************************************************************************************************************
+##******************************************************************************************************************************************************************
+##******************************************************FEATURE EXTRACTOR BUSINESS**********************************************************************************
+##******************************************************************************************************************************************************************
 
-#******************************************************************************************************************************************************************
-#******************************************************************************************************************************************************************
-#********************************************* POTENTIAL REPRESENTATIONS OF ENEMY AGENTS **************************************************************************
+##******************************************************************************************************************************************************************
+##******************************************************************************************************************************************************************
+##********************************************* POTENTIAL REPRESENTATIONS OF ENEMY AGENTS **************************************************************************
 
-#******************************************************************************************************************************************************************
-#******************************************************************************************************************************************************************
-#******************************************************************************************************************************************************************
-#******************************************************************INFERENCE MODULE BUSINESS***********************************************************************
+##******************************************************************************************************************************************************************
+##******************************************************************************************************************************************************************
+##******************************************************************************************************************************************************************
+##******************************************************************INFERENCE MODULE BUSINESS***********************************************************************
 

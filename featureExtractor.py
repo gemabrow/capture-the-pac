@@ -61,7 +61,6 @@ class MasterExtractor:
     self.agent = myAgent
     self.distancer = Distancer( getLayout('defaultCapture') )
     self.distancer.getMazeDistances()
-    self.enemyPositions = None
 
   def getFeatures(self, gameState, action):
     features = util.Counter()    
