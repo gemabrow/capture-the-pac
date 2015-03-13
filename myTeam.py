@@ -20,7 +20,7 @@ import random, time, util, json
 #################
 
 def createTeam(firstIndex, secondIndex, isRed,
-               first = 'EphemeralAgent', second = 'EphemeralAgent'):
+               first = 'BaseAgent', second = 'EphemeralAgent'):
   """
   This function should return a list of two agents that will form the
   team, initialized using firstIndex and secondIndex as their agent
@@ -121,7 +121,7 @@ class BaseAgent(CaptureAgent):
   NOTE: Since the opposing agents' positions are not given (i.e. not
         directly observable)
   '''
-  def __init__( self, index, timeForComputing = .1):
+  def __init__( self, index, timeForComputing = .1, **args):
     CaptureAgent.__init__(self, index, timeForComputing)
     self.QValues = util.Counter()
     self.weights = util.Counter()
@@ -211,9 +211,13 @@ class BaseAgent(CaptureAgent):
     """
     Computes a linear combination of features and feature weights
     """
-    features = self.getFeatures(gameState, action)
-    weights = self.getWeights(gameState, action)
-    return features * weights
+    QValue = 0.0
+    # extract feature vectors
+    featureVectors = self.featExtractor.getFeatures(gameState, action)
+    # perform dotProduct multiplication
+    for fV in featureVectors:
+      QValue += featureVectors[fV] * self.weights[fV]
+    return QValue
   
   def getDistribution(self):
     """
@@ -238,7 +242,7 @@ class BaseAgent(CaptureAgent):
     """
     Returns a counter of features for the state
     """
-    features = util.Counter()
+    features = self.featExtractor.getFeatures(gameState, action)
     
     successor = self.getSuccessor(gameState, action)
     features['successorScore'] = self.getScore(successor)
@@ -274,17 +278,17 @@ class EphemeralAgent(BaseAgent):
   from capture import CaptureRules
   
   def __init__( self, index, timeForComputing = .1, 
-               alpha = 1.0, epsilon = 0.05, gamma = 0.8, numTraining = 20):
+               alpha = 1.0, epsilon = 0.05, gamma = 0.8, numTraining = 10):
     BaseAgent.__init__( self, index, timeForComputing )
-    self.alphaNum = float(alpha)
-    self.alphaDen = float(alpha)
-    self.alpha = 1.0
-    self.epsilon = float(epsilon)
-    self.discount = float(gamma)
-    self.numTraining = int(numTraining)
     self.episodesSoFar = 0
     self.accumTrainRewards = 0.0
     self.accumTestRewards = 0.0
+    self.alphaNum = numTraining
+    self.alphaDen = 1 if self.episodesSoFar == 0.0 else self.episodesSoFar
+    self.alpha = float(self.alphaNum/self.alphaDen)
+    self.epsilon = float(epsilon)
+    self.discount = float(gamma)
+    self.numTraining = int(numTraining)
     
   def registerInitialState(self, gameState):
     """
@@ -323,6 +327,8 @@ class EphemeralAgent(BaseAgent):
     QValue = 0.0
     # extract feature vectors
     featureVectors = self.featExtractor.getFeatures(gameState, action)
+    with open('weights1', 'w') as outfile:
+          json.dump(self.weights, outfile)
     # perform dotProduct multiplication
     for fV in featureVectors:
       QValue += featureVectors[fV] * self.weights[fV]
@@ -344,8 +350,6 @@ class EphemeralAgent(BaseAgent):
     bestValue = self.getValue(gameState)
     bestActions = []
     for action in legalActions:
-      if action == None:
-        print "WTF"
       # access QValue in this way due to "Important" note in getQValue
       thisValue = self.getQValue(gameState, action)
       # if the value matches that of the best action, append
@@ -357,7 +361,12 @@ class EphemeralAgent(BaseAgent):
     
     # choose a random action from the list of actions
     # associated with the best value
-    policy = random.choice(bestActions)
+    if bestActions:
+      policy = random.choice(bestActions)
+    else:
+      print "bad bad bad"
+      policy = random.choice(legalActions)
+
     return policy
 
   def getAction(self, gameState):
@@ -462,13 +471,14 @@ class EphemeralAgent(BaseAgent):
     """
       Called by Pacman game at the terminal gameState
     """
+    print self.episodesSoFar
     self.lastState = self.getPreviousObservation()
     self.gameState = self.getCurrentObservation()
     dx, dy = self.gameState.getAgentPosition(self.index)
     x, y = self.lastState.getAgentPosition(self.index)
     vector = (dx-x, dy-y)
     self.lastAction = Actions.vectorToDirection(vector)
-    deltaReward = self.getScore(self.gameState) ** 2
+    deltaReward = self.getScore(self.gameState) * float( 1200/(gameState.data.timeleft+1) )
     
     self.observeTransition(self.getPreviousObservation(), self.lastAction, 
                            self.getCurrentObservation(), deltaReward)
@@ -505,5 +515,3 @@ class EphemeralAgent(BaseAgent):
     if self.episodesSoFar == self.numTraining:
         with open('weights', 'w') as outfile:
           json.dump(self.weights, outfile)
-        with open('qValues', 'w') as outfile:
-          json.dump(self.QValues, outfile)
