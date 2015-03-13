@@ -9,10 +9,12 @@
 from baselineTeam import OffensiveReflexAgent
 from captureAgents import CaptureAgent
 from game import Directions, Actions, Agent
+from util import nearestPoint
 import game
 import layout
 import inference
 import featureExtractor
+import cPickle as pickle
 import random, time, util, json
 
 #################
@@ -20,7 +22,7 @@ import random, time, util, json
 #################
 
 def createTeam(firstIndex, secondIndex, isRed,
-               first = 'BaseAgent', second = 'EphemeralAgent'):
+               first = 'QidiotAgent', second = 'QidiotAgent'):
   """
   This function should return a list of two agents that will form the
   team, initialized using firstIndex and secondIndex as their agent
@@ -50,6 +52,30 @@ def createTeam(firstIndex, secondIndex, isRed,
 ##########
 # Agents #
 ##########
+def closestInstance(pos, searchMatrix, walls):
+  """
+  Finds instance nearest a position, based on 
+  a passed in matrix of boolean values, 
+  and returns the maze distance to it
+  """
+  initialPos = pos
+  fringe = [(pos[0], pos[1], 0)]
+  expanded = set()
+  while fringe:
+    pos_x, pos_y, dist = fringe.pop(0)
+    if (pos_x, pos_y) in expanded:
+      continue
+    expanded.add((pos_x, pos_y))
+    # if we find an instance at this location then exit
+    if searchMatrix[pos_x][pos_y]:
+      return dist
+    # otherwise spread out from the location to its neighbours
+    nbrs = Actions.getLegalNeighbors((pos_x, pos_y), walls)
+    for nbr_x, nbr_y in nbrs:
+      fringe.append((nbr_x, nbr_y, dist+1))
+  # no instance found
+  return None
+
 class BaseAgent(CaptureAgent):
   """
   A base agent to serve as a foundation for the varying agent structures.
@@ -123,18 +149,17 @@ class BaseAgent(CaptureAgent):
   '''
   def __init__( self, index, timeForComputing = .1, **args):
     CaptureAgent.__init__(self, index, timeForComputing)
-    self.QValues = util.Counter()
     self.weights = util.Counter()
     self.enemyBeliefs = util.Counter()
     # try reinitializing weights
     # to values from prior bouts
     try:
-      with open('weights') as infile:
-        json_weights = json.load(infile)
-        self.weights = json_weights
+      filehandler = open('weights.dat', 'r')
+      self.weights = pickle.load(filehandler)
     except IOError:
       print "No file 'weights' exists."
     
+    self.QValues = util.Counter()
     # setting indices for team and opponents
     self.friendIndex = self.index + 2
     if self.friendIndex > 3:
@@ -200,12 +225,20 @@ class BaseAgent(CaptureAgent):
     myPos = gameState.getAgentPosition(self.index)
     legal = gameState.getLegalActions(self.index)
     successorPosition = [ ( Actions.getSuccessor(myPos, a), a ) for a in legal ]
-    
-    bestActionPQ = util.PriorityQueue()
+    eatFood = self.getFood(gameState)
+    bestFoodDistance = closestInstance(myPos, eatFood, gameState.getWalls())
+    bestAction = util.Stack()
     for pos, a in successorPosition:
-      bestActionPQ.push( a, self.evaluate(gameState, a) )
+      x, y = pos
+      x = int(x)
+      y = int(y)
+      pos = x, y
+      thisDistance = closestInstance(pos, eatFood, gameState.getWalls() )
+      if thisDistance < bestFoodDistance:
+        bestFoodDistance = closestInstance(pos, eatFood, gameState.getWalls())
+        bestAction.push( a )
     self.displayDistributionsOverPositions(self.getDistribution())
-    return bestActionPQ.pop()
+    return bestAction.pop()
     
   def evaluate(self, gameState, action):
     """
@@ -261,7 +294,7 @@ class BaseAgent(CaptureAgent):
     """
     successor = gameState.generateSuccessor(self.index, action)
     return successor
-    
+
 class EphemeralAgent(BaseAgent):
   """
   A qlearning agent.
@@ -278,14 +311,14 @@ class EphemeralAgent(BaseAgent):
   from capture import CaptureRules
   
   def __init__( self, index, timeForComputing = .1, 
-               alpha = 1.0, epsilon = 0.05, gamma = 0.8, numTraining = 10):
+               alpha = 0.2, epsilon = 0.05, gamma = 0.8, numTraining =500, **args):
     BaseAgent.__init__( self, index, timeForComputing )
     self.episodesSoFar = 0
     self.accumTrainRewards = 0.0
     self.accumTestRewards = 0.0
-    self.alphaNum = numTraining
-    self.alphaDen = 1 if self.episodesSoFar == 0.0 else self.episodesSoFar
-    self.alpha = float(self.alphaNum/self.alphaDen)
+    #self.alphaNum = numTraining
+    #self.alphaDen = 1 if self.episodesSoFar == 0.0 else self.episodesSoFar
+    self.alpha = float(alpha)
     self.epsilon = float(epsilon)
     self.discount = float(gamma)
     self.numTraining = int(numTraining)
@@ -326,9 +359,12 @@ class EphemeralAgent(BaseAgent):
     """
     QValue = 0.0
     # extract feature vectors
-    featureVectors = self.featExtractor.getFeatures(gameState, action)
-    with open('weights1', 'w') as outfile:
-          json.dump(self.weights, outfile)
+    successor = gameState.generateSuccessor(self.index, action)
+    pos = successor.getAgentState(self.index).getPosition()
+    if pos != nearestPoint(pos):
+      # Only half a grid position was covered
+      successor = successor.generateSuccessor(self.index, action)
+    featureVectors = self.featExtractor.getFeatures(successor, action)
     # perform dotProduct multiplication
     for fV in featureVectors:
       QValue += featureVectors[fV] * self.weights[fV]
@@ -375,8 +411,6 @@ class EphemeralAgent(BaseAgent):
     informs parent of action for Pacman.  Do not change or remove this
     method.
     
-    action = QlearningAgent.getAction(self,gameState)
-    self.doAction(gameState,action)
     return action
     """
     # Append current gameState to observation history
@@ -399,8 +433,13 @@ class EphemeralAgent(BaseAgent):
     else:
       action = self.getPolicy(gameState)
       
+    self.doAction(gameState,action)
     return action
-
+  
+  def doAction(self, gameState, action):
+    self.lastState = gameState
+    self.lastAction = action
+    
   def update(self, gameState, action, nextState, reward):
     """
        Should update your weights based on transition
@@ -409,8 +448,8 @@ class EphemeralAgent(BaseAgent):
     # changes the learning factor such that it is more extreme
     # towards the beginning of a round and levels out over time
     # reinitializes denominator of alpha if time args passed in
-    self.alphaNum -= 1
-    self.alpha = float(self.alphaNum/self.alphaDen)
+    #self.alphaNum -= 1
+    #self.alpha = float(self.alphaNum/self.alphaDen)
     correction = reward + self.discount * self.getValue(nextState) - self.getQValue(gameState, action)
     
     featureVectors = self.featExtractor.getFeatures(gameState, action)
@@ -471,14 +510,13 @@ class EphemeralAgent(BaseAgent):
     """
       Called by Pacman game at the terminal gameState
     """
-    print self.episodesSoFar
     self.lastState = self.getPreviousObservation()
     self.gameState = self.getCurrentObservation()
     dx, dy = self.gameState.getAgentPosition(self.index)
     x, y = self.lastState.getAgentPosition(self.index)
     vector = (dx-x, dy-y)
     self.lastAction = Actions.vectorToDirection(vector)
-    deltaReward = self.getScore(self.gameState) * float( 1200/(gameState.data.timeleft+1) )
+    deltaReward = self.getScore(self.gameState) #AGGRESSIVE DELTA * float( 1200/(gameState.data.timeleft+1) )
     
     self.observeTransition(self.getPreviousObservation(), self.lastAction, 
                            self.getCurrentObservation(), deltaReward)
@@ -513,5 +551,31 @@ class EphemeralAgent(BaseAgent):
         
     # Where we save our accumulated QValues and weights so far
     if self.episodesSoFar == self.numTraining:
-        with open('weights', 'w') as outfile:
-          json.dump(self.weights, outfile)
+        try:
+          filehandler = open('weights.dat', 'w')
+          pickle.dump(self.weights, filehandler)
+        except IOError:
+          print "Unable to write file 'weights.dat'"
+        try:
+          filehandler = open('qValues.dat', 'w')
+          pickle.dump(self.QValues, filehandler)
+        except IOError:
+          print "Unable to write file 'qValues.dat'"
+
+class QidiotAgent(EphemeralAgent):
+  def __init__(self, index, timeForComputing = 0.1):
+    EphemeralAgent.__init__(self, index, timeForComputing)
+    self.QValues = util.Counter()
+    try:
+      filehandler = open('qValues.dat', 'r')
+      self.QValues = pickle.load(filehandler)
+    except IOError:
+      print "No file 'qValues' exists."
+  def getQValue(self, gameState, action):
+    self.QValues[(gameState, action)]
+    return self.QValues[(gameState, action)]
+  def update(self, gameState, action, nextState, reward):
+    QValue = self.getQValue(gameState, action)
+    self.QValues[(gameState, action)] = QValue + self.alpha * (reward + self.discount * self.getValue(nextState) - QValue)
+  def final(self, gameState):
+    EphemeralAgent.final(self, gameState)

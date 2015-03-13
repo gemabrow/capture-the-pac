@@ -87,6 +87,7 @@ class MasterExtractor:
     features['friendOnD'] = 2 if not gameState.getAgentState(self.agent.friendIndex).isPacman else 1
     friendPos = gameState.getAgentPosition(self.agent.friendIndex)
     features['friend-columnar-distance'] = abs(initialPos[0] - friendPos[0])
+    features['friend-pos-difference'] = self.agent.distancer.getDistance(friendPos, myPos)
     #print friendPos[0]
     # enemyPositions refers to the best guess from exact inference module
     self.enemyPositions = self.agent.getEnemyPositions(gameState)
