@@ -46,82 +46,13 @@ def createTeam(firstIndex, secondIndex, isRed,
   #second = agents.pop()
   
   # The following line is an example only; feel free to change it.
-  return [eval(first)(firstIndex), eval(second)(secondIndex)]
+  return [BaseAgent(firstIndex), EphemeralAgent(secondIndex)]
 
 ##########
 # Agents #
 ##########
 class BaseAgent(CaptureAgent):
-  """
-  A base agent to serve as a foundation for the varying agent structures.
-  Tracks beliefs about agents' positions.
-  """
-  ''' 
-  INHERITED VARIABLES (from CaptureAgent):
-  # index for this agent
-  self.index
-  
-  # true if agent is on the red team, false otherwise
-  self.red
-  
-  # Agent objects controlling this agent's team (including the agent)
-  self.agentsOnTeam
-  
-  # Maze distance calculator
-  self.distancer
-  
-  # history of observations -- a sequential list of gamestates that have occurred in this game
-  self.observationHistory
-  
-  # an amount of time to give each turn for computing maze distances
-  self.timeForComputing
 
-  INHERITED FUNCTIONS (from CaptureAgent):
-  self.final(gameState):                 resets observationHistory
-  
-  self.registerTeam(agentsOnTeam):       fills CaptureAgent.agentsOnTeam with indices of agents on team
-  
-  self.observationFunction(gameState):   return gameState.makeObservation(CaptureAgent.index)
-  
-  self.getAction(gameState):             appends current gameState on to our observation history
-                                         and calls our choose action method
-  
-  self.getFood(gameState):               returns a matrix with the food we're meant to eat
-                                         in the form m[x][y]==true if there is food for us
-                                         in that square (based on our team color).
-  
-  self.getFoodYouAreDefending(gameState):returns the food we should protect in the form
-                                         of a matrix m[x][y]==true if there is food our
-                                         opponent can eat at those coordinates.
-  
-  self.getCapsules(gameState):           duh
-  
-  self.getCapsulesYouAreDefending(gameState): also, duh
-  
-  self.getOpponents(gameState):          returns agent indices of our opponents in list form.
-  
-  self.getTeam(gameState):               returns a list of indices of the agents on our team.
-  
-  self.getScore(gameState):              returns a number that is the difference in teams' scores.
-                                         will be negative if we're a bunch of sissy la-la losers.
-  
-  self.getMazeDistance(pos1, pos2):      returns the maze distance from pos1 to pos2.
-  
-  self.getPreviousObservation():         returns the last GameState object this agent saw
-                                         (may not include the exact locations of our opponent's agents)
-  
-  self.getCurrentObservation():          like before, but now
-  
-  self.displayDistributionsOverPositions(distributions):  arg distributions is a tuple or list of util.Counter objects,
-                                                          where the i'th Counter has keys that are board positions (x,y)
-                                                          and values that encode the probability that agent i is at (x,y).
-                                                          returns an overlay of a distribution over positions on the pacman
-                                                          board representing an agent's beliefs about the positions of each
-                                                          agent.
-  
-  NOTE: Since the opposing agents' positions are not given (i.e. not
-        directly observable)
-  '''
   def __init__( self, index, timeForComputing = .1, extractor = "MasterExtractor", **args):
     CaptureAgent.__init__(self, index, timeForComputing)
     self.enemyBeliefs = util.Counter()
