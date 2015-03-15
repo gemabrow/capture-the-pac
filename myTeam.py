@@ -124,7 +124,6 @@ class BaseAgent(CaptureAgent):
   '''
   def __init__( self, index, timeForComputing = .1, extractor = "MasterExtractor", **args):
     CaptureAgent.__init__(self, index, timeForComputing)
-    print self.index
     self.enemyBeliefs = util.Counter()
     # try reinitializing weights
     # to values from prior bouts
@@ -210,7 +209,6 @@ class BaseAgent(CaptureAgent):
       x = int(x)
       y = int(y)
       pos = x, y
-      print self.evaluate(gameState, a)
       bestActions.push( (pos, a), (-1 * self.evaluate(gameState, a)) )
 
     return bestActions.pop()[1]
@@ -430,7 +428,7 @@ class EphemeralAgent(BaseAgent):
 
   def startEpisode(self):
     """
-      Called by environment when new episode is starting
+    Called by environment when new episode is starting
     """
     self.lastState = None
     self.lastAction = None
@@ -445,13 +443,14 @@ class EphemeralAgent(BaseAgent):
     else:
       self.accumTestRewards += self.episodeRewards
     self.episodesSoFar += 1
-    if self.episodesSoFar >= self.numTraining:
+    #if self.episodesSoFar >= self.numTraining:
       #print "no training"
       # Take off the training wheels
       #self.epsilon = 0.0    # no exploration
       #self.alpha = 0.0      # no learning
 
-  def isInTraining(self): # print if is in training
+  def isInTraining(self):
+    # print "*********************************TRAINING ****************************************************"
     return self.episodesSoFar < self.numTraining
 
   def isInTesting(self):
