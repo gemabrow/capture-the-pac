@@ -21,7 +21,7 @@ import random, time, util, pprint
 #################
 
 def createTeam(firstIndex, secondIndex, isRed,
-               first = 'BaseAgent', second = 'BaseAgent', **args):
+               first = 'BaseAgent', second = 'EphemeralAgent', **args):
   """
   This function should return a list of two agents that will form the
   team, initialized using firstIndex and secondIndex as their agent
@@ -274,7 +274,7 @@ class EphemeralAgent(BaseAgent):
   from capture import CaptureRules
   
   def __init__( self, index, timeForComputing = .1, 
-               alpha = 0.2, epsilon = 0.02, gamma = 0.8, numTraining = 50, **args):
+               alpha = 0.2, epsilon = 0.05, gamma = 0.8, numTraining = 100, **args):
     self.episodesSoFar = 0
     self.accumTrainRewards = 0.0
     self.accumTestRewards = 0.0
@@ -294,8 +294,8 @@ class EphemeralAgent(BaseAgent):
     """
     BaseAgent.registerInitialState(self, gameState)
     self.startEpisode()
-    #if self.episodesSoFar == 0:
-        #print 'Beginning %d episodes of Training' % (self.numTraining)
+    if self.episodesSoFar == 0:
+        print 'Beginning %d episodes of Training' % (self.numTraining)
 
   def getValue(self, gameState):
     """
@@ -340,10 +340,12 @@ class EphemeralAgent(BaseAgent):
     # if there are no legal actions, return policy (s.t. policy = None)
     if len(legalActions) == 0:
       return policy
-
+    
+    basePolicy = BaseAgent.chooseAction(self, gameState)
     bestValue = self.getValue(gameState)
     #print "bestValue: {}".format(bestValue)
     bestActions = []
+    bestActions.append(basePolicy)
     for action in legalActions:
       # access QValue in this way due to "Important" note in getQValue
       thisValue = self.getQValue(gameState, action)
@@ -359,9 +361,6 @@ class EphemeralAgent(BaseAgent):
     # associated with the best value
     if bestActions:
       policy = random.choice(bestActions)
-    else:
-      #print "bad bad bad"
-      policy = random.choice(legalActions)
 
     return policy
 
@@ -443,11 +442,11 @@ class EphemeralAgent(BaseAgent):
     else:
       self.accumTestRewards += self.episodeRewards
     self.episodesSoFar += 1
-    #if self.episodesSoFar >= self.numTraining:
+    if self.episodesSoFar >= self.numTraining:
       #print "no training"
       # Take off the training wheels
-      #self.epsilon = 0.0    # no exploration
-      #self.alpha = 0.0      # no learning
+      self.epsilon = 0.0    # no exploration
+      self.alpha = 0.0      # no learning
 
   def isInTraining(self):
     # print "*********************************TRAINING ****************************************************"
@@ -478,7 +477,7 @@ class EphemeralAgent(BaseAgent):
     x, y = self.lastState.getAgentPosition(self.index)
     vector = (dx-x, dy-y)
     self.lastAction = Actions.vectorToDirection(vector)
-    deltaReward = self.getScore(self.gameState) #AGGRESSIVE DELTA * float( 1200/(gameState.data.timeleft+1) )
+    deltaReward = self.getScore(self.gameState) * float( 1200/(gameState.data.timeleft+1) )
     
     self.observeTransition(self.getPreviousObservation(), self.lastAction, 
                            self.getCurrentObservation(), deltaReward)
@@ -512,7 +511,7 @@ class EphemeralAgent(BaseAgent):
         self.episodeStartTime = time.time()
         
     # Where we save our accumulated weights so far
-    if self.episodesSoFar <= self.numTraining:
+    if self.episodesSoFar % 5 == 0 or self.episodesSoFar == self.numTraining:
         try:
           with open(self.weightsFilename, 'wb') as outfile:
             pickle.dump(self.weights, outfile, protocol=pickle.HIGHEST_PROTOCOL)
