@@ -222,13 +222,16 @@ class MasterExtractor:
         elif myPos in Actions.getLegalNeighbors(closestInvader['pos'], walls):
           features['pursue-invader'] = 100.0
       elif scaredTime >= 1:
-        distanceToCenter = min(abs(legalPos[0] - halfWidth) for legalPos in Actions.getLegalNeighbors(myPos, walls))
-        features['FLEE'] = (10.0 / (NO_DBZ + distanceToCenter ))
+        midDist = min(abs(halfWidth - legalPos[0]) for legalPos in Actions.getLegalNeighbors(myPos, walls))
+        changeOver = 10.0 if not atHome(nextX, self.agent.red) else 5.0
+        features['FLEE'] = float(changeOver / (NO_DBZ + midDist ))
     
     "EAT EM UP"
     while not atHome(nextX, self.agent.red):
       if closestFood in Actions.getLegalNeighbors(myPos, walls):
         features['food-factor'] +=  10 if closestFood == myPos else features['food-factor'] + 5
+      if len(eatFood) == 1 and closestFood == myPos:
+        features['food-factor'] += 10
       if meToFood < enemyToFood or enemyDistance < meToFood:
         features['food-factor'] += 2
       ghosts = [enemy for enemy in enemies if enemy['isPacman']]
@@ -254,7 +257,7 @@ class MasterExtractor:
               features['eat-capsule'] = 1.0 if closestCapsule == myPos else 0.0
         except (IndexError, ValueError):
           pass
-        if closeGhosts > 0 and len(Actions.getLegalNeighbors(prevPos, walls)) == 2:
+        if closeGhosts > 0 and len(Actions.getLegalNeighbors(prevPos, walls)) == 2 and myPos == closestGhost['pos']:
           # means our only options are stop or eat it (by it, we mean the ghost)
           features["suicide-pill"] = 100
           break
