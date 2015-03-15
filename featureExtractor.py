@@ -180,12 +180,12 @@ class MasterExtractor:
     " LIKE A BAT OUTTA HELL "
     if myPos == prevPos and myPos in Actions.getLegalNeighbors(prevPos, walls):
       features['camping-penalty'] -= 1
-      print features['camping-penalty']
+      #print features['camping-penalty']
 
 
     " WHAT'RE MY OPTIONS, HMMMM??? "
     features['available-moves-from-successor'] = len(Actions.getLegalNeighbors(myPos, walls))
-    print "successor moves ", features['available-moves-from-successor']
+    #print "successor moves ", features['available-moves-from-successor']
     # trend towards middle
     # and away from the initial spawning point
     

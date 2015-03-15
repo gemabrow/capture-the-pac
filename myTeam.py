@@ -362,7 +362,7 @@ class EphemeralAgent(BaseAgent):
     if bestActions:
       policy = random.choice(bestActions)
     else:
-      print "bad bad bad"
+      #print "bad bad bad"
       policy = random.choice(legalActions)
 
     return policy
@@ -383,7 +383,7 @@ class EphemeralAgent(BaseAgent):
     
     # if there are no legal actions, return action (s.t. action = None)
     if len(legalActions) == 0:
-      print "no legal actions!"
+      #print "no legal actions!"
       return action
     
     # Updates beliefs
@@ -446,13 +446,13 @@ class EphemeralAgent(BaseAgent):
       self.accumTestRewards += self.episodeRewards
     self.episodesSoFar += 1
     if self.episodesSoFar >= self.numTraining:
-      print "no training"
+      #print "no training"
       # Take off the training wheels
       #self.epsilon = 0.0    # no exploration
       #self.alpha = 0.0      # no learning
 
   def isInTraining(self):
-    print "********************************* IN TRAINING ********************************"
+    #print "********************************* IN TRAINING ********************************"
     return self.episodesSoFar < self.numTraining
 
   def isInTesting(self):
