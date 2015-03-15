@@ -451,8 +451,7 @@ class EphemeralAgent(BaseAgent):
       #self.epsilon = 0.0    # no exploration
       #self.alpha = 0.0      # no learning
 
-  def isInTraining(self):
-    #print "********************************* IN TRAINING ********************************"
+  def isInTraining(self): # print if is in training
     return self.episodesSoFar < self.numTraining
 
   def isInTesting(self):
