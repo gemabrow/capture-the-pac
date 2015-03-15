@@ -6,7 +6,6 @@
 # purposes. The Pacman AI projects were developed at UC Berkeley, primarily by
 # John DeNero (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
 # For more info, see http://inst.eecs.berkeley.edu/~cs188/sp09/pacman.html
-from baselineTeam import OffensiveReflexAgent
 from captureAgents import CaptureAgent
 from game import Directions, Actions, Agent
 from util import nearestPoint
@@ -15,14 +14,14 @@ import layout
 import inference
 import featureExtractor
 import cPickle as pickle
-import random, time, util, json
+import random, time, util, pprint
 
 #################
 # Team creation #
 #################
 
 def createTeam(firstIndex, secondIndex, isRed,
-               first = 'QidiotAgent', second = 'QidiotAgent'):
+               first = 'BaseAgent', second = 'BaseAgent', **args):
   """
   This function should return a list of two agents that will form the
   team, initialized using firstIndex and secondIndex as their agent
@@ -40,11 +39,11 @@ def createTeam(firstIndex, secondIndex, isRed,
   
   # randomize which agent is first or second,
   # just to mix things up
-  random.seed('R1ckR011d')
-  agents = [first, second]
-  first = random.choice(agents)
-  agents.remove(first)
-  second = agents.pop()
+  #random.seed('R1ckR011d')
+  #agents = [first, second]
+  #first = random.choice(agents)
+  #agents.remove(first)
+  #second = agents.pop()
   
   # The following line is an example only; feel free to change it.
   return [eval(first)(firstIndex), eval(second)(secondIndex)]
@@ -52,30 +51,6 @@ def createTeam(firstIndex, secondIndex, isRed,
 ##########
 # Agents #
 ##########
-def closestInstance(pos, searchMatrix, walls):
-  """
-  Finds instance nearest a position, based on 
-  a passed in matrix of boolean values, 
-  and returns the maze distance to it
-  """
-  initialPos = pos
-  fringe = [(pos[0], pos[1], 0)]
-  expanded = set()
-  while fringe:
-    pos_x, pos_y, dist = fringe.pop(0)
-    if (pos_x, pos_y) in expanded:
-      continue
-    expanded.add((pos_x, pos_y))
-    # if we find an instance at this location then exit
-    if searchMatrix[pos_x][pos_y]:
-      return dist
-    # otherwise spread out from the location to its neighbours
-    nbrs = Actions.getLegalNeighbors((pos_x, pos_y), walls)
-    for nbr_x, nbr_y in nbrs:
-      fringe.append((nbr_x, nbr_y, dist+1))
-  # no instance found
-  return None
-
 class BaseAgent(CaptureAgent):
   """
   A base agent to serve as a foundation for the varying agent structures.
@@ -147,18 +122,14 @@ class BaseAgent(CaptureAgent):
   NOTE: Since the opposing agents' positions are not given (i.e. not
         directly observable)
   '''
-  def __init__( self, index, timeForComputing = .1, **args):
+  def __init__( self, index, timeForComputing = .1, extractor = "MasterExtractor", **args):
     CaptureAgent.__init__(self, index, timeForComputing)
-    self.weights = util.Counter()
+    print self.index
     self.enemyBeliefs = util.Counter()
     # try reinitializing weights
     # to values from prior bouts
-    try:
-      filehandler = open('weights.dat', 'r')
-      self.weights = pickle.load(filehandler)
-    except IOError:
-      print "No file 'weights' exists."
-    
+    #print type(self.weights)
+    self.weights = util.Counter()
     self.QValues = util.Counter()
     # setting indices for team and opponents
     self.friendIndex = self.index + 2
@@ -169,7 +140,14 @@ class BaseAgent(CaptureAgent):
     self.inferenceType = inference.ExactInference
     self.inferenceModules = [ self.inferenceType( index, self ) 
                              for index in self.enemyIndices ]
-    self.featExtractor = featureExtractor.MasterExtractor(self)
+    self.weightsFilename = str(extractor)+str(self.index)+'.weights'
+    extractorType = util.lookup(extractor, globals())
+    self.featExtractor = extractorType(self)
+    try:
+      with open(self.weightsFilename, 'rb') as infile:
+        self.weights = pickle.load(infile)
+    except (IOError, EOFError):
+      print "No file '"+self.weightsFilename+" exists."
     
   def registerInitialState(self, gameState):
     """
@@ -189,6 +167,7 @@ class BaseAgent(CaptureAgent):
     self.enemyBeliefs = [inf.getBeliefDistribution() for inf in self.inferenceModules]
     self.firstMove = True
     ##################################################################################################
+    self.walls = gameState.getWalls()
     
   def observationFunction(self, gameState):
     return gameState.makeObservation(self.index)
@@ -222,24 +201,20 @@ class BaseAgent(CaptureAgent):
     chooseAction, depending on the agent's state will take the
     action or discard it
     """
-    myPos = gameState.getAgentPosition(self.index)
     legal = gameState.getLegalActions(self.index)
-    successorPosition = [ ( Actions.getSuccessor(myPos, a), a ) for a in legal ]
-    eatFood = self.getFood(gameState)
-    bestFoodDistance = closestInstance(myPos, eatFood, gameState.getWalls())
-    bestAction = util.Stack()
+    pos = gameState.getAgentPosition(self.index)
+    successorPosition = [ ( Actions.getSuccessor(pos, a), a ) for a in legal ]
+    bestActions = util.PriorityQueue()
     for pos, a in successorPosition:
       x, y = pos
       x = int(x)
       y = int(y)
       pos = x, y
-      thisDistance = closestInstance(pos, eatFood, gameState.getWalls() )
-      if thisDistance < bestFoodDistance:
-        bestFoodDistance = closestInstance(pos, eatFood, gameState.getWalls())
-        bestAction.push( a )
-    self.displayDistributionsOverPositions(self.getDistribution())
-    return bestAction.pop()
-    
+      print self.evaluate(gameState, a)
+      bestActions.push( (pos, a), (-1 * self.evaluate(gameState, a)) )
+
+    return bestActions.pop()[1]
+  
   def evaluate(self, gameState, action):
     """
     Computes a linear combination of features and feature weights
@@ -249,7 +224,7 @@ class BaseAgent(CaptureAgent):
     featureVectors = self.featExtractor.getFeatures(gameState, action)
     # perform dotProduct multiplication
     for fV in featureVectors:
-      QValue += featureVectors[fV] * self.weights[fV]
+      QValue += featureVectors[fV]
     return QValue
   
   def getDistribution(self):
@@ -276,17 +251,7 @@ class BaseAgent(CaptureAgent):
     Returns a counter of features for the state
     """
     features = self.featExtractor.getFeatures(gameState, action)
-    
-    successor = self.getSuccessor(gameState, action)
-    features['successorScore'] = self.getScore(successor)
     return features
-
-  def getWeights(self, gameState, action):
-    """
-    Normally, weights do not depend on the gamestate.  They can be either
-    a counter or a dictionary.
-    """
-    return {'successorScore': 1.0}
   
   def getSuccessor(self, gameState, action):
     """
@@ -311,17 +276,15 @@ class EphemeralAgent(BaseAgent):
   from capture import CaptureRules
   
   def __init__( self, index, timeForComputing = .1, 
-               alpha = 0.2, epsilon = 0.05, gamma = 0.8, numTraining =500, **args):
-    BaseAgent.__init__( self, index, timeForComputing )
+               alpha = 0.2, epsilon = 0.02, gamma = 0.8, numTraining = 50, **args):
     self.episodesSoFar = 0
     self.accumTrainRewards = 0.0
     self.accumTestRewards = 0.0
-    #self.alphaNum = numTraining
-    #self.alphaDen = 1 if self.episodesSoFar == 0.0 else self.episodesSoFar
     self.alpha = float(alpha)
     self.epsilon = float(epsilon)
     self.discount = float(gamma)
     self.numTraining = int(numTraining)
+    BaseAgent.__init__( self, index, timeForComputing, **args )
     
   def registerInitialState(self, gameState):
     """
@@ -333,8 +296,8 @@ class EphemeralAgent(BaseAgent):
     """
     BaseAgent.registerInitialState(self, gameState)
     self.startEpisode()
-    if self.episodesSoFar == 0:
-        print 'Beginning %d episodes of Training' % (self.numTraining)
+    #if self.episodesSoFar == 0:
+        #print 'Beginning %d episodes of Training' % (self.numTraining)
 
   def getValue(self, gameState):
     """
@@ -350,6 +313,7 @@ class EphemeralAgent(BaseAgent):
     # creates a list of all Q Values for legal actions from current state
     qValues = [self.getQValue(gameState, action) for action in gameState.getLegalActions(self.index)]
     # returns the max from aforementioned list
+    #print max(qValues)
     return max(qValues)
       
   def getQValue(self, gameState, action):
@@ -359,15 +323,11 @@ class EphemeralAgent(BaseAgent):
     """
     QValue = 0.0
     # extract feature vectors
-    successor = gameState.generateSuccessor(self.index, action)
-    pos = successor.getAgentState(self.index).getPosition()
-    if pos != nearestPoint(pos):
-      # Only half a grid position was covered
-      successor = successor.generateSuccessor(self.index, action)
-    featureVectors = self.featExtractor.getFeatures(successor, action)
+    featureVectors = self.featExtractor.getFeatures(gameState, action)
     # perform dotProduct multiplication
     for fV in featureVectors:
       QValue += featureVectors[fV] * self.weights[fV]
+      #print self.weights[fV]
     return QValue
 
   def getPolicy(self, gameState):
@@ -384,6 +344,7 @@ class EphemeralAgent(BaseAgent):
       return policy
 
     bestValue = self.getValue(gameState)
+    #print "bestValue: {}".format(bestValue)
     bestActions = []
     for action in legalActions:
       # access QValue in this way due to "Important" note in getQValue
@@ -393,6 +354,7 @@ class EphemeralAgent(BaseAgent):
       # the "best value" to them, we append all actions
       # that share this attribute
       if thisValue == bestValue:
+        #print "appended action"
         bestActions.append(action)
     
     # choose a random action from the list of actions
@@ -405,7 +367,7 @@ class EphemeralAgent(BaseAgent):
 
     return policy
 
-  def getAction(self, gameState):
+  def chooseAction(self, gameState):
     """
     Simply calls the getAction method of QLearningAgent and then
     informs parent of action for Pacman.  Do not change or remove this
@@ -484,15 +446,17 @@ class EphemeralAgent(BaseAgent):
       self.accumTestRewards += self.episodeRewards
     self.episodesSoFar += 1
     if self.episodesSoFar >= self.numTraining:
+      print "no training"
       # Take off the training wheels
-      self.epsilon = 0.0    # no exploration
-      self.alpha = 0.0      # no learning
+      #self.epsilon = 0.0    # no exploration
+      #self.alpha = 0.0      # no learning
 
   def isInTraining(self):
-      return self.episodesSoFar < self.numTraining
+    print "********************************* IN TRAINING ********************************"
+    return self.episodesSoFar < self.numTraining
 
   def isInTesting(self):
-      return not self.isInTraining()
+    return not self.isInTraining()
     
   def observationFunction(self, gameState):
     """
@@ -549,33 +513,11 @@ class EphemeralAgent(BaseAgent):
         self.lastWindowAccumRewards = 0.0
         self.episodeStartTime = time.time()
         
-    # Where we save our accumulated QValues and weights so far
-    if self.episodesSoFar == self.numTraining:
+    # Where we save our accumulated weights so far
+    if self.episodesSoFar <= self.numTraining:
         try:
-          filehandler = open('weights.dat', 'w')
-          pickle.dump(self.weights, filehandler)
+          with open(self.weightsFilename, 'wb') as outfile:
+            pickle.dump(self.weights, outfile, protocol=pickle.HIGHEST_PROTOCOL)
+          print "updated weights"
         except IOError:
-          print "Unable to write file 'weights.dat'"
-        try:
-          filehandler = open('qValues.dat', 'w')
-          pickle.dump(self.QValues, filehandler)
-        except IOError:
-          print "Unable to write file 'qValues.dat'"
-
-class QidiotAgent(EphemeralAgent):
-  def __init__(self, index, timeForComputing = 0.1):
-    EphemeralAgent.__init__(self, index, timeForComputing)
-    self.QValues = util.Counter()
-    try:
-      filehandler = open('qValues.dat', 'r')
-      self.QValues = pickle.load(filehandler)
-    except IOError:
-      print "No file 'qValues' exists."
-  def getQValue(self, gameState, action):
-    self.QValues[(gameState, action)]
-    return self.QValues[(gameState, action)]
-  def update(self, gameState, action, nextState, reward):
-    QValue = self.getQValue(gameState, action)
-    self.QValues[(gameState, action)] = QValue + self.alpha * (reward + self.discount * self.getValue(nextState) - QValue)
-  def final(self, gameState):
-    EphemeralAgent.final(self, gameState)
+          print "Unable to write file "+self.weightsFilename
