@@ -6,21 +6,22 @@
 # purposes. The Pacman AI projects were developed at UC Berkeley, primarily by
 # John DeNero (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
 # For more info, see http://inst.eecs.berkeley.edu/~cs188/sp09/pacman.html
-from baselineTeam import OffensiveReflexAgent
 from captureAgents import CaptureAgent
 from game import Directions, Actions, Agent
+from util import nearestPoint
 import game
 import layout
 import inference
 import featureExtractor
-import random, time, util, json
+import cPickle as pickle
+import random, time, util, pprint
 
 #################
 # Team creation #
 #################
 
 def createTeam(firstIndex, secondIndex, isRed,
-               first = 'EphemeralAgent', second = 'EphemeralAgent'):
+               first = 'BaseAgent', second = 'EphemeralAgent', **args):
   """
   This function should return a list of two agents that will form the
   team, initialized using firstIndex and secondIndex as their agent
@@ -38,11 +39,11 @@ def createTeam(firstIndex, secondIndex, isRed,
   
   # randomize which agent is first or second,
   # just to mix things up
-  random.seed('R1ckR011d')
-  agents = [first, second]
-  first = random.choice(agents)
-  agents.remove(first)
-  second = agents.pop()
+  #random.seed('R1ckR011d')
+  #agents = [first, second]
+  #first = random.choice(agents)
+  #agents.remove(first)
+  #second = agents.pop()
   
   # The following line is an example only; feel free to change it.
   return [eval(first)(firstIndex), eval(second)(secondIndex)]
@@ -121,20 +122,14 @@ class BaseAgent(CaptureAgent):
   NOTE: Since the opposing agents' positions are not given (i.e. not
         directly observable)
   '''
-  def __init__( self, index, timeForComputing = .1):
+  def __init__( self, index, timeForComputing = .1, extractor = "MasterExtractor", **args):
     CaptureAgent.__init__(self, index, timeForComputing)
-    self.QValues = util.Counter()
-    self.weights = util.Counter()
     self.enemyBeliefs = util.Counter()
     # try reinitializing weights
     # to values from prior bouts
-    try:
-      with open('weights') as infile:
-        json_weights = json.load(infile)
-        self.weights = json_weights
-    except IOError:
-      print "No file 'weights' exists."
-    
+    #print type(self.weights)
+    self.weights = util.Counter()
+    self.QValues = util.Counter()
     # setting indices for team and opponents
     self.friendIndex = self.index + 2
     if self.friendIndex > 3:
@@ -144,7 +139,14 @@ class BaseAgent(CaptureAgent):
     self.inferenceType = inference.ExactInference
     self.inferenceModules = [ self.inferenceType( index, self ) 
                              for index in self.enemyIndices ]
-    self.featExtractor = featureExtractor.MasterExtractor(self)
+    self.weightsFilename = str(extractor)+str(self.index)+'.weights'
+    extractorType = util.lookup(extractor, globals())
+    self.featExtractor = extractorType(self)
+    try:
+      with open(self.weightsFilename, 'rb') as infile:
+        self.weights = pickle.load(infile)
+    except (IOError, EOFError):
+      print "No file '"+self.weightsFilename+" exists."
     
   def registerInitialState(self, gameState):
     """
@@ -164,6 +166,7 @@ class BaseAgent(CaptureAgent):
     self.enemyBeliefs = [inf.getBeliefDistribution() for inf in self.inferenceModules]
     self.firstMove = True
     ##################################################################################################
+    self.walls = gameState.getWalls()
     
   def observationFunction(self, gameState):
     return gameState.makeObservation(self.index)
@@ -197,23 +200,30 @@ class BaseAgent(CaptureAgent):
     chooseAction, depending on the agent's state will take the
     action or discard it
     """
-    myPos = gameState.getAgentPosition(self.index)
     legal = gameState.getLegalActions(self.index)
-    successorPosition = [ ( Actions.getSuccessor(myPos, a), a ) for a in legal ]
-    
-    bestActionPQ = util.PriorityQueue()
+    pos = gameState.getAgentPosition(self.index)
+    successorPosition = [ ( Actions.getSuccessor(pos, a), a ) for a in legal ]
+    bestActions = util.PriorityQueue()
     for pos, a in successorPosition:
-      bestActionPQ.push( a, self.evaluate(gameState, a) )
-    self.displayDistributionsOverPositions(self.getDistribution())
-    return bestActionPQ.pop()
-    
+      x, y = pos
+      x = int(x)
+      y = int(y)
+      pos = x, y
+      bestActions.push( (pos, a), (-1 * self.evaluate(gameState, a)) )
+
+    return bestActions.pop()[1]
+  
   def evaluate(self, gameState, action):
     """
     Computes a linear combination of features and feature weights
     """
-    features = self.getFeatures(gameState, action)
-    weights = self.getWeights(gameState, action)
-    return features * weights
+    QValue = 0.0
+    # extract feature vectors
+    featureVectors = self.featExtractor.getFeatures(gameState, action)
+    # perform dotProduct multiplication
+    for fV in featureVectors:
+      QValue += featureVectors[fV]
+    return QValue
   
   def getDistribution(self):
     """
@@ -238,18 +248,8 @@ class BaseAgent(CaptureAgent):
     """
     Returns a counter of features for the state
     """
-    features = util.Counter()
-    
-    successor = self.getSuccessor(gameState, action)
-    features['successorScore'] = self.getScore(successor)
+    features = self.featExtractor.getFeatures(gameState, action)
     return features
-
-  def getWeights(self, gameState, action):
-    """
-    Normally, weights do not depend on the gamestate.  They can be either
-    a counter or a dictionary.
-    """
-    return {'successorScore': 1.0}
   
   def getSuccessor(self, gameState, action):
     """
@@ -257,7 +257,7 @@ class BaseAgent(CaptureAgent):
     """
     successor = gameState.generateSuccessor(self.index, action)
     return successor
-    
+
 class EphemeralAgent(BaseAgent):
   """
   A qlearning agent.
@@ -274,17 +274,15 @@ class EphemeralAgent(BaseAgent):
   from capture import CaptureRules
   
   def __init__( self, index, timeForComputing = .1, 
-               alpha = 1.0, epsilon = 0.05, gamma = 0.8, numTraining = 20):
-    BaseAgent.__init__( self, index, timeForComputing )
-    self.alphaNum = float(alpha)
-    self.alphaDen = float(alpha)
-    self.alpha = 1.0
-    self.epsilon = float(epsilon)
-    self.discount = float(gamma)
-    self.numTraining = int(numTraining)
+               alpha = 0.2, epsilon = 0.05, gamma = 0.8, numTraining = 100, **args):
     self.episodesSoFar = 0
     self.accumTrainRewards = 0.0
     self.accumTestRewards = 0.0
+    self.alpha = float(alpha)
+    self.epsilon = float(epsilon)
+    self.discount = float(gamma)
+    self.numTraining = int(numTraining)
+    BaseAgent.__init__( self, index, timeForComputing, **args )
     
   def registerInitialState(self, gameState):
     """
@@ -313,6 +311,7 @@ class EphemeralAgent(BaseAgent):
     # creates a list of all Q Values for legal actions from current state
     qValues = [self.getQValue(gameState, action) for action in gameState.getLegalActions(self.index)]
     # returns the max from aforementioned list
+    #print max(qValues)
     return max(qValues)
       
   def getQValue(self, gameState, action):
@@ -326,6 +325,7 @@ class EphemeralAgent(BaseAgent):
     # perform dotProduct multiplication
     for fV in featureVectors:
       QValue += featureVectors[fV] * self.weights[fV]
+      #print self.weights[fV]
     return QValue
 
   def getPolicy(self, gameState):
@@ -340,12 +340,13 @@ class EphemeralAgent(BaseAgent):
     # if there are no legal actions, return policy (s.t. policy = None)
     if len(legalActions) == 0:
       return policy
-
+    
+    basePolicy = BaseAgent.chooseAction(self, gameState)
     bestValue = self.getValue(gameState)
+    #print "bestValue: {}".format(bestValue)
     bestActions = []
+    bestActions.append(basePolicy)
     for action in legalActions:
-      if action == None:
-        print "WTF"
       # access QValue in this way due to "Important" note in getQValue
       thisValue = self.getQValue(gameState, action)
       # if the value matches that of the best action, append
@@ -353,21 +354,22 @@ class EphemeralAgent(BaseAgent):
       # the "best value" to them, we append all actions
       # that share this attribute
       if thisValue == bestValue:
+        #print "appended action"
         bestActions.append(action)
     
     # choose a random action from the list of actions
     # associated with the best value
-    policy = random.choice(bestActions)
+    if bestActions:
+      policy = random.choice(bestActions)
+
     return policy
 
-  def getAction(self, gameState):
+  def chooseAction(self, gameState):
     """
     Simply calls the getAction method of QLearningAgent and then
     informs parent of action for Pacman.  Do not change or remove this
     method.
     
-    action = QlearningAgent.getAction(self,gameState)
-    self.doAction(gameState,action)
     return action
     """
     # Append current gameState to observation history
@@ -378,7 +380,7 @@ class EphemeralAgent(BaseAgent):
     
     # if there are no legal actions, return action (s.t. action = None)
     if len(legalActions) == 0:
-      print "no legal actions!"
+      #print "no legal actions!"
       return action
     
     # Updates beliefs
@@ -390,8 +392,13 @@ class EphemeralAgent(BaseAgent):
     else:
       action = self.getPolicy(gameState)
       
+    self.doAction(gameState,action)
     return action
-
+  
+  def doAction(self, gameState, action):
+    self.lastState = gameState
+    self.lastAction = action
+    
   def update(self, gameState, action, nextState, reward):
     """
        Should update your weights based on transition
@@ -400,8 +407,8 @@ class EphemeralAgent(BaseAgent):
     # changes the learning factor such that it is more extreme
     # towards the beginning of a round and levels out over time
     # reinitializes denominator of alpha if time args passed in
-    self.alphaNum -= 1
-    self.alpha = float(self.alphaNum/self.alphaDen)
+    #self.alphaNum -= 1
+    #self.alpha = float(self.alphaNum/self.alphaDen)
     correction = reward + self.discount * self.getValue(nextState) - self.getQValue(gameState, action)
     
     featureVectors = self.featExtractor.getFeatures(gameState, action)
@@ -420,7 +427,7 @@ class EphemeralAgent(BaseAgent):
 
   def startEpisode(self):
     """
-      Called by environment when new episode is starting
+    Called by environment when new episode is starting
     """
     self.lastState = None
     self.lastAction = None
@@ -436,15 +443,17 @@ class EphemeralAgent(BaseAgent):
       self.accumTestRewards += self.episodeRewards
     self.episodesSoFar += 1
     if self.episodesSoFar >= self.numTraining:
+      #print "no training"
       # Take off the training wheels
       self.epsilon = 0.0    # no exploration
       self.alpha = 0.0      # no learning
 
   def isInTraining(self):
-      return self.episodesSoFar < self.numTraining
+    # print "*********************************TRAINING ****************************************************"
+    return self.episodesSoFar < self.numTraining
 
   def isInTesting(self):
-      return not self.isInTraining()
+    return not self.isInTraining()
     
   def observationFunction(self, gameState):
     """
@@ -468,7 +477,7 @@ class EphemeralAgent(BaseAgent):
     x, y = self.lastState.getAgentPosition(self.index)
     vector = (dx-x, dy-y)
     self.lastAction = Actions.vectorToDirection(vector)
-    deltaReward = self.getScore(self.gameState) ** 2
+    deltaReward = self.getScore(self.gameState) * float( 1200/(gameState.data.timeleft+1) )
     
     self.observeTransition(self.getPreviousObservation(), self.lastAction, 
                            self.getCurrentObservation(), deltaReward)
@@ -501,9 +510,11 @@ class EphemeralAgent(BaseAgent):
         self.lastWindowAccumRewards = 0.0
         self.episodeStartTime = time.time()
         
-    # Where we save our accumulated QValues and weights so far
-    if self.episodesSoFar == self.numTraining:
-        with open('weights', 'w') as outfile:
-          json.dump(self.weights, outfile)
-        with open('qValues', 'w') as outfile:
-          json.dump(self.QValues, outfile)
+    # Where we save our accumulated weights so far
+    if self.episodesSoFar % 5 == 0 or self.episodesSoFar == self.numTraining:
+        try:
+          with open(self.weightsFilename, 'wb') as outfile:
+            pickle.dump(self.weights, outfile, protocol=pickle.HIGHEST_PROTOCOL)
+          print "updated weights"
+        except IOError:
+          print "Unable to write file "+self.weightsFilename

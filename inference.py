@@ -25,7 +25,7 @@ class InferenceModule:
   def __init__(self, enemyIndex, myAgent):
     # a class representation of enemy agent that takes into
     # account both ghost and pacman states -- code at bottom
-    self.enemyIsRed = True if enemyIndex in [0, 2] else False
+    self.enemyIsRed = True if enemyIndex in (0, 2) else False
     self.agent = myAgent
     self.enemy = enemyIndex
       
