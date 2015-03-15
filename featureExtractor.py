@@ -237,7 +237,7 @@ class MasterExtractor:
       ghosts = [enemy for enemy in enemies if enemy['isPacman']]
       if ghosts:
         closestGhost = min(ghosts, key = lambda enemy: self.agent.distancer.getDistance(enemy['pos'], myPos))
-        if closestGhost['scaredTimer'] >= 1:
+        if closestGhost['scaredTimer'] > 1:
           # TIME TO RAGE
           # #print "STRAIGHT RAGIN'", myPos
           features['RAGE-RAGE-RAGE'] = 666.0/( NO_DBZ + (min(enemyDistance, meToFood)) )
