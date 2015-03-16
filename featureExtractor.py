@@ -8,9 +8,11 @@
 # For more info, see http://inst.eecs.berkeley.edu/~cs188/sp09/pacman.html
 from distanceCalculator import Distancer
 from game import Directions, Actions
+from collections import defaultdict
 import time, util, math
 
-NO_DBZ = 1 # No division by zero -- not to confused with those against the DragonBall Z series
+NO_DBZ = float(1.0)
+# No division by zero -- not to confused with those against the DragonBall Z series
 
 def closestInstance(pos, searchMatrix, walls):
   """
@@ -149,7 +151,8 @@ class MasterExtractor:
     successor = gameState.generateSuccessor(self.agent.index, action)
     walls = gameState.getWalls()
     denom = (walls.width * walls.height) 
-    features = util.Counter()
+    features = defaultdict(float)
+    features['bias'] = 1.0
     # ***************** features of agents ***********************
     initialPos = gameState.getInitialAgentPosition(self.agent.index)
     prevAgentState = gameState.getAgentState(self.agent.index)
@@ -179,9 +182,8 @@ class MasterExtractor:
     
     " LIKE A BAT OUTTA HELL "
     if myPos == prevPos and myPos in Actions.getLegalNeighbors(prevPos, walls):
-      features['camping-penalty'] -= 1
+      features['camping-penalty'] = -999999
       #print features['camping-penalty']
-
 
     " WHAT'RE MY OPTIONS, HMMMM??? "
     features['available-moves-from-successor'] = len(Actions.getLegalNeighbors(myPos, walls))
@@ -189,27 +191,41 @@ class MasterExtractor:
     # trend towards middle
     # and away from the initial spawning point
     
-    food = self.agent.getFood(gameState)
-    eatFood = food.asList()
+    food1 = self.agent.getFood(gameState)
+    food2 = self.agent.getFoodYouAreDefending(gameState)
+    eatFood = food1.asList() if food1.asList() is not None else []
+    defendFood = food2.asList() if food2.asList() is not None else []
+    if len(eatFood) == 0 or len(defendFood) == 0:
+      print "MAYBE AN ISSUE HERE ________________________________________"
+      
+    closestEnemy = min(enemies, key = lambda enemy: self.agent.distancer.getDistance(myPos, enemy['pos']))
+    if closestEnemy is None:
+      print "ISSUE HERE"
+    enemyDistance = self.agent.distancer.getDistance(myPos, closestEnemy['pos'])
     if self.agent.index > self.agent.friendIndex:
       closestFood = min(eatFood, key = lambda food: self.agent.distancer.getDistance(food, prevPos) if topHalf(food[1]) else None)
+      if closestFood is None:
+        print "MAYBE AN ISSUE HERE ______________________________________"
+      features['engage-enemy-factor'] =  1 / (NO_DBZ +  2.5 * enemyDistance )
     else:
-      features['engage-enemy-factor'] = 1.25 / (NO_DBZ + len(self.agent.getFoodYouAreDefending(gameState).asList()) )
+      print "NO DBZ: {}, len(defendFood): {}".format(type(NO_DBZ), type(len(defendFood)))
+      features['engage-enemy-factor'] = 1.25 / (NO_DBZ + len(defendFood) + enemyDistance )
       closestFood = min(eatFood, key = lambda food: self.agent.distancer.getDistance(food, prevPos) if not topHalf(food[1]) else None)
     if closestFood is None:
       closestFood = min(eatFood, key = lambda food: self.agent.distancer.getDistance(food, prevPos) )
-    
+    enemyToFood = self.agent.distancer.getDistance(closestFood, closestEnemy['pos'])
+      
     meToFood = self.agent.distancer.getDistance(closestFood, myPos)
     meToFoodPrev = self.agent.distancer.getDistance(closestFood, prevPos)
     
+    # LAST NAN THROWN BY "general-food-factor" ****************************************
     if meToFood < meToFoodPrev:
-      features['food-factor'] = float( 100 / (NO_DBZ + len(eatFood)) )
+      features['general-food-factor'] = float( 10 / (NO_DBZ + len(eatFood)) )
+    else:
+      features['general-food-factor'] = float(-1.0)
     
-    closestEnemy = min(enemies, key = lambda enemy: self.agent.distancer.getDistance(myPos, enemy['pos']))
-    enemyDistance = self.agent.distancer.getDistance(myPos, closestEnemy['pos'])
-    enemyToFood = self.agent.distancer.getDistance(closestFood, closestEnemy['pos'])
-    features['engage-enemy-factor'] += 1 / (NO_DBZ +  2.5 * abs(myPos[0] - initialPos[0]) + enemyDistance )
-    
+    print "line 219 type: {}".format(type(1 / (NO_DBZ +  2.5 * abs(myPos[0] - initialPos[0]) + enemyDistance )))
+    print " added operand result: {} ", type(features['engage-enemy-factor'])
     "TIME TO PLAY SOME D"
     if atHome(nextX, self.agent.red):
       invaders = [enemy for enemy in enemies if enemy['isPacman']]
@@ -229,11 +245,11 @@ class MasterExtractor:
     "EAT EM UP"
     while not atHome(nextX, self.agent.red):
       if closestFood in Actions.getLegalNeighbors(myPos, walls):
-        features['food-factor'] +=  10 if closestFood == myPos else features['food-factor'] + 5
+        features['food-neighbor'] =  10 if closestFood == myPos else 0
       if len(eatFood) == 1 and closestFood == myPos:
-        features['food-factor'] += 10
+        features['last-food'] = 1000
       if meToFood < enemyToFood or enemyDistance < meToFood:
-        features['food-factor'] += 2
+        features['food-factor'] = 5
       ghosts = [enemy for enemy in enemies if enemy['isPacman']]
       if ghosts:
         closestGhost = min(ghosts, key = lambda enemy: self.agent.distancer.getDistance(enemy['pos'], myPos))
@@ -241,8 +257,8 @@ class MasterExtractor:
           # TIME TO RAGE
           # #print "STRAIGHT RAGIN'", myPos
           features['RAGE-RAGE-RAGE'] = 666.0/( NO_DBZ + (min(enemyDistance, meToFood)) )
-          features['RAGE-CHOMP'] = 666.0 if closestGhost['pos'] == myPos else 1.0
-          features['RAGE-CHOMP'] += 666.1 if closestFood == myPos else 1.5
+          features['RAGE-EAT-GHOST'] = 666.0 if closestGhost['pos'] == myPos else 1.0
+          features['RAGE-EAT-FOOD'] = 666.1 if closestFood == myPos else features['RAGE-CHOMP']
           break
         
         closeGhosts = sum(myPos in Actions.getLegalNeighbors(g['pos'], walls) for g in ghosts)
@@ -250,6 +266,8 @@ class MasterExtractor:
           eatCapsules = self.agent.getCapsules(gameState)
           if len(eatCapsules) > 0:
             closestCapsule = min(eatCapsules, key = lambda capsule: self.agent.distancer.getDistance(myPos, capsule))
+            if closestCapsule is None:
+              print "FUCKKKKKKKKKKKKK)_______________NO CAPSULE WHAT__________-------------------------------"
             enemyToCapsule = self.agent.distancer.getDistance(closestCapsule, closestGhost['pos'])
             meToCapsule = self.agent.distancer.getDistance(myPos, closestCapsule)
             if meToCapsule <= enemyToCapsule:
@@ -263,7 +281,14 @@ class MasterExtractor:
           break
         
       else:
-        features['food-factor'] += 5
+        features['all-alone-food-factor'] = 5
       break
-
+    
+    for fV, val in features.iteritems():
+      if math.isnan(val):
+        print "prevFv: "
+        print "*******MORE NaN********for {}".format(fV)
+        print "{} feature, value is {}".format(fV, val)
+        time.sleep(10)
+        
     return features
